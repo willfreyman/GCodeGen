@@ -60,16 +60,6 @@ Generated code includes:
 * Python 3.x
 * Tkinter (included with most Python installs)
 
-## Run
-
-```bash
-python your_script.py
-```
-
-## File Reference
-
-Main script:
-
 
 ## Limitations / Reality Check
 
