@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, simpledialog
 import math
 
 CANVAS_W = 700
@@ -14,6 +14,10 @@ SPINDLE_RPM = 12000
 strokes            = []   # [{points, name, depth, color}]
 current_stroke_pts = []
 drawing_active     = False
+hover_stroke_idx   = None
+stroke_rows        = []
+preview_render_fn  = None
+preview_win        = None
 
 perim  = {"x0": 100, "y0": 480, "x1": 580, "y1": 80}
 origin = {"x": 100,  "y": 480}
@@ -54,8 +58,11 @@ def redraw_all():
     _grid()
     _draw_perim()
     _draw_origin()
-    for s in strokes:
-        _stroke_on(canvas, s)
+    for i, s in enumerate(strokes):
+        if i == hover_stroke_idx:
+            _stroke_on(canvas, s, width=4)
+        else:
+            _stroke_on(canvas, s)
 
 def _grid():
     for x in range(0, CANVAS_W, 20):
@@ -106,6 +113,42 @@ def _hit_edge(x, y):
     return ((xmin<=x<=xmax and (abs(y-y0)<t or abs(y-y1)<t)) or
             (ymin<=y<=ymax and (abs(x-x0)<t or abs(x-x1)<t)))
 
+def _pt_seg_dist(px, py, x0, y0, x1, y1):
+    dx, dy = x1 - x0, y1 - y0
+    if dx == 0 and dy == 0:
+        return math.hypot(px - x0, py - y0)
+    t = ((px - x0) * dx + (py - y0) * dy) / float(dx * dx + dy * dy)
+    t = max(0.0, min(1.0, t))
+    qx, qy = x0 + t * dx, y0 + t * dy
+    return math.hypot(px - qx, py - qy)
+
+def _nearest_stroke_idx(x, y, threshold=7):
+    best_i = None
+    best_d = threshold
+    for i, s in enumerate(strokes):
+        pts = s["points"]
+        for j in range(len(pts)-1):
+            d = _pt_seg_dist(x, y, pts[j][0], pts[j][1], pts[j+1][0], pts[j+1][1])
+            if d <= best_d:
+                best_i, best_d = i, d
+    return best_i
+
+def _set_hover_stroke(idx):
+    global hover_stroke_idx
+    if hover_stroke_idx == idx:
+        return
+    hover_stroke_idx = idx
+    redraw_all()
+    _refresh_list()
+
+def on_motion(e):
+    if drawing_active or drag_state["what"] in ("draw", "origin", "perim", "bl", "br", "tl", "tr"):
+        return
+    _set_hover_stroke(_nearest_stroke_idx(e.x, e.y))
+
+def on_leave(_e):
+    _set_hover_stroke(None)
+
 # ── Canvas events ──────────────────────────────────────────────────────────────
 
 def on_press(e):
@@ -130,7 +173,7 @@ def on_drag(e):
         dx,dy = x-drag_state["sx"],y-drag_state["sy"]
         origin["x"] = drag_state["orig"]["x"]+dx
         origin["y"] = drag_state["orig"]["y"]+dy
-        redraw_all(); return
+        redraw_all(); _update_preview(); return
     if w in ("bl","br","tl","tr"):
         dx,dy = x-drag_state["sx"],y-drag_state["sy"]
         o = drag_state["orig"]
@@ -138,13 +181,13 @@ def on_drag(e):
         perim["x1"] = o["x1"]+dx if "r" in w else o["x1"]
         perim["y0"] = o["y0"]+dy if "b" in w else o["y0"]
         perim["y1"] = o["y1"]+dy if "t" in w else o["y1"]
-        redraw_all(); return
+        redraw_all(); _update_preview(); return
     if w == "perim":
         dx,dy = x-drag_state["sx"],y-drag_state["sy"]
         o = drag_state["orig"]
         for k in ("x0","x1"): perim[k] = o[k]+dx
         for k in ("y0","y1"): perim[k] = o[k]+dy
-        redraw_all(); return
+        redraw_all(); _update_preview(); return
     if w == "draw" and drawing_active and current_stroke_pts:
         ox,oy = current_stroke_pts[-1]
         canvas.create_line(ox,oy,x,y, fill=_cur_color(), width=2, tags="preview")
@@ -168,6 +211,7 @@ def _finalize():
     canvas.delete("preview")
     _stroke_on(canvas, s)
     _refresh_list()
+    _update_preview()
 
 def _cur_color(): return COLORS[color_idx[0] % len(COLORS)]
 
@@ -177,26 +221,72 @@ def snap_origin():
     origin["x"] = min(perim["x0"],perim["x1"])
     origin["y"] = max(perim["y0"],perim["y1"])
     redraw_all()
+    _update_preview()
 
 # ── Op list ────────────────────────────────────────────────────────────────────
 
 def _refresh_list():
+    stroke_rows.clear()
     for w in stroke_list_frame.winfo_children(): w.destroy()
     for i,s in enumerate(strokes):
-        row = tk.Frame(stroke_list_frame, bg="#fff")
+        is_hover = (i == hover_stroke_idx)
+        row_bg = "#e7f1ff" if is_hover else "#fff"
+        row = tk.Frame(stroke_list_frame, bg=row_bg)
         row.pack(fill="x", pady=1)
-        tk.Label(row, bg=s["color"], width=2).pack(side="left", padx=(2,4))
-        tk.Label(row, text=f"{s['name']}  z={s['depth']}mm",
-                 anchor="w", bg="#fff", font=("Helvetica",9)).pack(side="left",fill="x",expand=True)
+        stroke_rows.append(row)
+        swatch = tk.Label(row, bg=s["color"], width=2)
+        swatch.pack(side="left", padx=(2,4))
+        txt = tk.Label(row, text=f"{s['name']}  z={s['depth']}mm",
+                 anchor="w", bg=row_bg, font=("Helvetica",9))
+        txt.pack(side="left",fill="x",expand=True)
         tk.Button(row, text="✕", command=lambda i=i: _del(i),
-                  font=("Helvetica",8), relief="flat", bg="#fff",
+                  font=("Helvetica",8), relief="flat", bg=row_bg,
                   fg="#c00", cursor="hand2").pack(side="right")
+        row.bind("<Button-1>", lambda _e, i=i: _edit_depth(i))
+        swatch.bind("<Button-1>", lambda _e, i=i: _edit_depth(i))
+        txt.bind("<Button-1>", lambda _e, i=i: _edit_depth(i))
+    _scroll_hover_row_into_view()
+
+def _edit_depth(i):
+    if i < 0 or i >= len(strokes):
+        return
+    cur = strokes[i]["depth"]
+    val = simpledialog.askfloat("Edit depth",
+                                f"Set depth for '{strokes[i]['name']}' (mm):",
+                                initialvalue=cur,
+                                parent=window)
+    if val is None:
+        return
+    strokes[i]["depth"] = round(val, 3)
+    _refresh_list()
+    _update_preview()
+
+def _scroll_hover_row_into_view():
+    if hover_stroke_idx is None:
+        return
+    if hover_stroke_idx < 0 or hover_stroke_idx >= len(stroke_rows):
+        return
+    window.update_idletasks()
+    row = stroke_rows[hover_stroke_idx]
+    top = row.winfo_y()
+    bottom = top + row.winfo_height()
+    viewport = stroke_list_canvas.winfo_height()
+    total = max(1, stroke_list_frame.winfo_height())
+    y0, y1 = stroke_list_canvas.yview()
+    cur_top = y0 * total
+    cur_bottom = y1 * total
+    if top < cur_top:
+        stroke_list_canvas.yview_moveto(top / total)
+    elif bottom > cur_bottom:
+        stroke_list_canvas.yview_moveto(max(0.0, (bottom - viewport) / total))
 
 def _del(i):
     strokes.pop(i); redraw_all(); _refresh_list()
+    _update_preview()
 
 def clear_all():
     strokes.clear(); redraw_all(); _refresh_list()
+    _update_preview()
 
 # ── Build ops ──────────────────────────────────────────────────────────────────
 
@@ -235,6 +325,34 @@ def _all_strokes_px():
                        "color":"#555555","depth":-1.0,"name":"Perimeter"})
     result.extend(strokes)
     return result
+
+def _set_entry(entry, value):
+    entry.delete(0, tk.END)
+    entry.insert(0, str(value))
+
+# Source: Bantam Tools material guides (Acrylic/Aluminum/Brass/Machinable Foam),
+# using conservative starter values; wood/MDF/stone are inferred fallback presets.
+MAT_MACHINE_PRESETS = {
+    "Wood":      {"feed_xy": 900, "feed_z": 60, "rpm": 12000},
+    "MDF":       {"feed_xy": 800, "feed_z": 50, "rpm": 12000},
+    "Aluminium": {"feed_xy": 180, "feed_z": 15, "rpm": 12000},
+    "Acrylic":   {"feed_xy": 600, "feed_z": 40, "rpm": 12000},
+    "Foam":      {"feed_xy": 800, "feed_z": 40, "rpm": 12000},
+    "Brass":     {"feed_xy": 200, "feed_z": 17, "rpm": 12000},
+    "Stone":     {"feed_xy": 120, "feed_z": 10, "rpm": 10000},
+}
+
+def _apply_material_preset(material):
+    p = MAT_MACHINE_PRESETS.get(material)
+    if not p:
+        return
+    _set_entry(feed_xy_entry, p["feed_xy"])
+    _set_entry(feed_z_entry, p["feed_z"])
+    _set_entry(rpm_entry, p["rpm"])
+
+def _update_preview():
+    if preview_render_fn:
+        preview_render_fn()
 
 # ── G-code export ──────────────────────────────────────────────────────────────
 
@@ -426,11 +544,14 @@ def open_simulation():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def open_preview():
-    all_s = _all_strokes_px()
-    if not all_s:
-        messagebox.showwarning("Nothing","Draw something first."); return
+    global preview_render_fn, preview_win
+    if preview_win and preview_win.winfo_exists():
+        preview_win.deiconify()
+        preview_win.lift()
+        return
 
     win = tk.Toplevel(window)
+    preview_win = win
     win.title("Finished Product Preview")
     win.configure(bg="#222")
     win.resizable(False, False)
@@ -483,6 +604,14 @@ def open_preview():
 
     def render(*_):
         pc.delete("all")
+        all_s = _all_strokes_px()
+        if not all_s:
+            pc.create_rectangle(0,0,PW,PH, fill="#2a2a2a", outline="")
+            pc.create_text(PW//2, PH//2, text="Draw something to preview",
+                           fill="#aaa", font=("Helvetica",11,"bold"))
+            info.config(text="No operations yet.", fg="#888")
+            return
+
         mat = mat_var.get()
         surf, groove, shadow = MAT_PAL.get(mat, ("#c8a06a","#5c3010","#9a7040"))
 
@@ -517,23 +646,16 @@ def open_preview():
         bit_mm = bit_var.get()
         br     = max(1.0, (bit_mm/2) * pxmm)
 
-        # draw strokes as densely sampled bit footprints
+        # draw strokes as continuous grooves (avoid visible circle footprint edges)
+        groove_w = max(2, int(round(br * 2)))
         for s in all_s:
             pts = s["points"]
             for i in range(len(pts)-1):
                 x0,y0 = pts[i]; x1,y1 = pts[i+1]
-                dist  = math.hypot(x1-x0,y1-y0)
-                steps = max(1, int(dist / max(0.5, br*0.4)))
-                for t in range(steps+1):
-                    f  = t/steps
-                    cx = x0+(x1-x0)*f
-                    cy = y0+(y1-y0)*f
-                    # shadow rim
-                    pc.create_oval(cx-br,cy-br,cx+br+1,cy+br+1,
-                                   fill=shadow, outline="")
-                    # groove
-                    pc.create_oval(cx-br+1,cy-br+1,cx+br,cy+br,
-                                   fill=groove, outline="")
+                pc.create_line(x0,y0,x1,y1, fill=shadow, width=groove_w+1,
+                               capstyle=tk.ROUND, joinstyle=tk.ROUND)
+                pc.create_line(x0,y0,x1,y1, fill=groove, width=groove_w,
+                               capstyle=tk.ROUND, joinstyle=tk.ROUND)
 
         # perimeter boundary overlay
         lx = min(perim["x0"],perim["x1"]); rx = max(perim["x0"],perim["x1"])
@@ -560,9 +682,17 @@ def open_preview():
                  f"Min feature ≈ {bit_mm:.1f}mm",
             fg="#888")
 
+    def _material_changed(*_):
+        _apply_material_preset(mat_var.get())
+        render()
+
     bit_scale.config(command=lambda _: render())
-    mat_var.trace_add("write", render)
+    mat_var.trace_add("write", _material_changed)
+    preview_render_fn = render
     render()
+    _apply_material_preset(mat_var.get())
+    render()
+    win.protocol("WM_DELETE_WINDOW", lambda: None)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  GUI LAYOUT
@@ -586,6 +716,8 @@ canvas.pack()
 canvas.bind("<ButtonPress-1>",   on_press)
 canvas.bind("<B1-Motion>",       on_drag)
 canvas.bind("<ButtonRelease-1>", on_release)
+canvas.bind("<Motion>",          on_motion)
+canvas.bind("<Leave>",           on_leave)
 
 # ── Panel ──────────────────────────────────────────────────────────────────────
 panel = tk.Frame(main, bg="#f0f0f0", width=252)
@@ -633,9 +765,28 @@ tk.Label(os_, text="Draw on canvas with left mouse button",
 
 # Op list
 ls = _sec("Operations")
-stroke_list_frame = tk.Frame(ls, bg="#fff", bd=1, relief="sunken", height=110)
-stroke_list_frame.pack(fill="both", expand=True)
-stroke_list_frame.pack_propagate(False)
+stroke_list_outer = tk.Frame(ls, bg="#fff", bd=1, relief="sunken", height=110)
+stroke_list_outer.pack(fill="both", expand=True)
+stroke_list_outer.pack_propagate(False)
+stroke_list_canvas = tk.Canvas(stroke_list_outer, bg="#fff", highlightthickness=0)
+stroke_list_scroll = tk.Scrollbar(stroke_list_outer, orient="vertical",
+                                  command=stroke_list_canvas.yview)
+stroke_list_canvas.configure(yscrollcommand=stroke_list_scroll.set)
+stroke_list_canvas.pack(side="left", fill="both", expand=True)
+stroke_list_scroll.pack(side="right", fill="y")
+stroke_list_frame = tk.Frame(stroke_list_canvas, bg="#fff")
+stroke_list_canvas_window = stroke_list_canvas.create_window(
+    (0, 0), window=stroke_list_frame, anchor="nw"
+)
+
+def _on_stroke_list_frame_cfg(_e):
+    stroke_list_canvas.configure(scrollregion=stroke_list_canvas.bbox("all"))
+
+def _on_stroke_list_canvas_cfg(e):
+    stroke_list_canvas.itemconfig(stroke_list_canvas_window, width=e.width)
+
+stroke_list_frame.bind("<Configure>", _on_stroke_list_frame_cfg)
+stroke_list_canvas.bind("<Configure>", _on_stroke_list_canvas_cfg)
 _btn(ls, "Clear All", clear_all, bg="#c0392b").pack(anchor="e", pady=(4,0))
 
 # Machine
@@ -659,4 +810,5 @@ tk.Label(window,
 
 redraw_all()
 _refresh_list()
+window.after(120, open_preview)
 window.mainloop()
