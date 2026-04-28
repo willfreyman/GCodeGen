@@ -720,7 +720,7 @@ def open_preview():
 # ══════════════════════════════════════════════════════════════════════════════
 
 window = tk.Tk()
-window.title("Nightbots 10686  |  CNC Path Editor")
+window.title("Nightbots 10686 | 416aab |  CNC Path Editor")
 window.configure(bg="#f0f0f0")
 window.resizable(False, False)
 
