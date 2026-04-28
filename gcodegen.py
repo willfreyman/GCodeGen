@@ -342,6 +342,27 @@ MAT_MACHINE_PRESETS = {
     "Stone":     {"feed_xy": 120, "feed_z": 10, "rpm": 10000},
 }
 
+NEW_MAT_MACHINE_PRESETS = {
+    "Wood":          {"feed_xy": 700,  "feed_z": 250, "step_over": 0.45, "step_down": 2,   "rpm": 20000},
+    "Pine/Cedar":    {"feed_xy": 800,  "feed_z": 250, "step_over": 0.45, "step_down": 2,   "rpm": 20000},
+    "Pinewood":      {"feed_xy": 1000, "feed_z": 250, "step_over": 0.30, "step_down": 1.5, "rpm": 20000},
+    "Maple":         {"feed_xy": 800,  "feed_z": 250, "step_over": 0.45, "step_down": 1,   "rpm": 20000},
+
+    "MDF":           {"feed_xy": 700,  "feed_z": 200, "step_over": 0.20, "step_down": 1.2, "rpm": 22000},
+
+    "Acrylic":       {"feed_xy": 800,  "feed_z": 250, "step_over": 0.40, "step_down": 1.8, "rpm": 24000},
+    "HDPE":          {"feed_xy": 1100, "feed_z": 250, "step_over": 0.35, "step_down": 1.5, "rpm": 20000},
+
+    "Aluminum":      {"feed_xy": 1000, "feed_z": 100, "step_over": 0.20, "step_down": 0.4, "rpm": 20000},
+    "Brass":         {"feed_xy": 200,  "feed_z": 17,  "step_over": 0.20, "step_down": 0.4, "rpm": 12000},
+
+    "Circuit Board": {"feed_xy": 800,  "feed_z": 100, "step_over": 0.30, "step_down": None, "rpm": 20000},
+
+    "Foam":          {"feed_xy": 1500, "feed_z": 800, "step_over": 0.70, "step_down": 2,   "rpm": 20000},
+
+    "Stone":         {"feed_xy": 120,  "feed_z": 10,  "step_over": 0.10, "step_down": 0.2, "rpm": 10000},
+}
+
 def _apply_material_preset(material):
     p = MAT_MACHINE_PRESETS.get(material)
     if not p:
@@ -699,7 +720,7 @@ def open_preview():
 # ══════════════════════════════════════════════════════════════════════════════
 
 window = tk.Tk()
-window.title("Draw → G-code  |  CNC Path Editor")
+window.title("Nightbots 10686  |  CNC Path Editor")
 window.configure(bg="#f0f0f0")
 window.resizable(False, False)
 
