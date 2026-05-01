@@ -1,0 +1,52 @@
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distributions / packaging
+*.egg
+*.egg-info/
+.eggs/
+build/
+develop-eggs/
+sdist/
+wheels/
+share/python-wheels/
+
+# ── Virtual environments ──────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── PyInstaller ───────────────────────────────────────────────────────────
+# Build intermediates (regenerable). The output dist/ is too big for git;
+# release the .exe via GitHub Releases instead.
+gcode_viewer_v2/build/
+gcode_viewer_v2/dist/
+
+# ── IDE / editor noise ────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Test / coverage ───────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ── Local secrets / configs ───────────────────────────────────────────────
+.env
+.env.local
+*.local
+
+# ── Claude Code / agent files ─────────────────────────────────────────────
+# .claude/ holds local agent state and is per-machine
+.claude/
