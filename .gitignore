@@ -22,10 +22,15 @@ env/
 ENV/
 
 # ── PyInstaller ───────────────────────────────────────────────────────────
-# Build intermediates (regenerable). The output dist/ is too big for git;
-# release the .exe via GitHub Releases instead.
+# Build intermediates (regenerable). PyInstaller raw outputs and the final
+# exe/GcodeSimV1.exe are kept out of git — they're 100+ MB, exceed GitHub's
+# per-file limit, and rebuild deterministically from source via build.bat
+# (or `pyinstaller pyinstaller.spec`). The viewer .exe is published via
+# GitHub Releases; the editor binary (exe/gcodegenV1.0.exe) is small enough
+# to track directly.
 gcode_viewer_v2/build/
 gcode_viewer_v2/dist/
+exe/GcodeSimV1.exe
 
 # ── IDE / editor noise ────────────────────────────────────────────────────
 .vscode/

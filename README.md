@@ -38,36 +38,38 @@ for an isometric.
 A stripped-down legacy Tk-based viewer (`gcode_preview.py`) is kept for
 users with older machines that can't run VTK; same file format.
 
-## Distribute / build
+## Get the viewer
 
-The repo ships pre-built distributables in **`exe/`**:
+Two paths, pick whichever's easier:
 
-- `exe/GcodeSimV1.exe` — the modern viewer (~130 MB)
-- `exe/gcodegenV1.0.exe` — the editor (~10 MB)
+**Pre-built binary** (recommended for end users) — download
+`GcodeSimV1.exe` from the latest [GitHub Release][releases]. Double-click
+to run. Nothing else to install.
 
-End-users get a Windows `.exe` they can double-click. No Python, no
-dependencies, no installer needed.
-
-### Building from source
-
-From the project root:
+**Build from source** (one command, takes ~2 min):
 
 ```cmd
-cd gcode_viewer_v2
-pip install -r requirements.txt
-pip install pyinstaller
-pyinstaller pyinstaller.spec --noconfirm --clean
+build.bat
 ```
 
-PyInstaller's raw output lands at `gcode_viewer_v2/dist/GcodeSimV1.exe`.
-After verifying it launches, copy it to `exe/GcodeSimV1.exe` to publish:
+Requires Python 3.10+ on `PATH`. The script installs `vtk`, `PyQt5`,
+`numpy`, and `pyinstaller` into the active Python environment, runs
+PyInstaller against `gcode_viewer_v2/pyinstaller.spec`, and copies the
+output to `exe\GcodeSimV1.exe` for distribution.
+
+Use a virtual env if you want isolation:
 
 ```cmd
-copy /Y dist\GcodeSimV1.exe ..\exe\GcodeSimV1.exe
+python -m venv .venv
+.venv\Scripts\activate
+build.bat
 ```
 
-The `dist/` and `build/` directories are intentionally `.gitignore`'d — only
-the curated binary in `exe/` is tracked.
+The editor binary `exe/gcodegenV1.0.exe` is committed to the repo
+directly (only ~10 MB). The viewer binary is excluded — it's 130 MB,
+over GitHub's per-file limit, and rebuilds deterministically from source.
+
+[releases]: https://github.com/willfreyman/GCodeGen/releases
 
 ## Repository layout
 
@@ -100,9 +102,10 @@ GCodeGen/
 │   ├── pyinstaller.spec  ← build recipe
 │   └── README.md         ← v2-specific notes
 │
-└── exe/                  ← pre-built distributables (committed, ready to run)
-    ├── GcodeSimV1.exe    ← bundled viewer (~130 MB, single-file)
-    └── gcodegenV1.0.exe  ← bundled editor (~10 MB)
+├── build.bat             ← one-command build of GcodeSimV1.exe
+└── exe/
+    ├── GcodeSimV1.exe    ← built locally by build.bat (gitignored — 130 MB)
+    └── gcodegenV1.0.exe  ← bundled editor (committed, ~10 MB)
 ```
 
 ## What's deliberately out of scope
