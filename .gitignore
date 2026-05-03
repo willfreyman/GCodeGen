@@ -52,6 +52,11 @@ gcode_viewer_v3_mac/icon.icns
 gcode_viewer_v3/vendor/
 gcode_viewer_v3_mac/vendor/
 
+# Generated Windows resource files (icon + version info embedding). Built
+# from versioninfo.json + icon.ico by `goversioninfo`; rebuilt on every
+# `build.ps1` run, deterministic from inputs.
+*.syso
+
 # ── IDE / editor noise ────────────────────────────────────────────────────
 .vscode/
 .idea/
