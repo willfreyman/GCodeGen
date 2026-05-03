@@ -16,7 +16,17 @@ import (
 
 	"gcodegen.local/viewer/internal/parser"
 	"gcodegen.local/viewer/internal/scene"
+	"gcodegen.local/viewer/internal/version"
 )
+
+// windowTitle composes the title-bar string. If `latest` is non-empty and
+// differs from `current`, includes an "→ vX.Y.Z available" hint.
+func windowTitle(current, latest string) string {
+	if latest != "" && latest != current {
+		return "GcodeSimV3 " + current + " → " + latest + " available | Nightbots 10686 | 416aab"
+	}
+	return "GcodeSimV3 " + current + " | Nightbots 10686 | 416aab"
+}
 
 // Default bit diameter (mm) until the user changes it via the toolbar entry.
 const defaultBitDiameter = 6.35 // 1/4" — common CNC bit
@@ -34,10 +44,24 @@ const cubeViewportSize = 90
 // OpenAL32.dll + libvorbis.dll. By going directly to `window` + `renderer`
 // the binary stays self-contained and runs on stock Windows.
 func Run(initialPath string) {
-	if err := window.Init(1280, 800, "GcodeSimV3 | Nightbots 10686 | 416aab"); err != nil {
+	if err := window.Init(1280, 800, windowTitle(version.Version, "")); err != nil {
 		panic(fmt.Errorf("window init: %w", err))
 	}
 	win := window.Get().(*window.GlfwWindow)
+
+	// Async update check: fetch the latest release tag from GitHub off the
+	// main thread (5-sec timeout, silent fail). When (and IF) it returns,
+	// the main loop reads the channel and updates the window title once.
+	// Skipped entirely for `go run` / unversioned dev builds.
+	updateCheckCh := make(chan string, 1)
+	if !version.IsDev() {
+		go func() {
+			latest, err := version.LatestRelease()
+			if err == nil && latest != "" && latest != version.Version {
+				updateCheckCh <- latest
+			}
+		}()
+	}
 
 	rend := renderer.NewRenderer(win.Gls())
 	if err := rend.AddDefaultShaders(); err != nil {
@@ -172,6 +196,15 @@ func Run(initialPath string) {
 		scale := float32(fbW) / float32(w)
 		if scale <= 0 {
 			scale = 1
+		}
+
+		// Pick up the update-check result if it arrived this frame and
+		// stamp the title bar. Non-blocking — most frames will hit the
+		// default branch and skip.
+		select {
+		case latest := <-updateCheckCh:
+			win.SetTitle(windowTitle(version.Version, latest))
+		default:
 		}
 
 		// Refresh focal from the orbiter (handles user pans).

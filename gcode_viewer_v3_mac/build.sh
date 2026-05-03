@@ -24,13 +24,19 @@ echo "→ Building $BIN_NAME (CGO + universal-binary if possible)..."
 # Build a universal binary (arm64 + amd64) so the same .app runs on Apple
 # Silicon and Intel Macs. Requires both arch toolchains; falls back to a
 # single-arch build if `lipo` or one of the targets isn't available.
+# Inject current git tag so the running binary can compare itself against
+# the latest GitHub release on startup.
+GIT_VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+LDFLAGS="-s -w -X gcodegen.local/viewer/internal/version.Version=${GIT_VERSION}"
+echo "  (version: ${GIT_VERSION})"
+
 ARCH_BINS=()
 build_arch() {
     local arch="$1"
     local out="${BIN_NAME}-${arch}"
     echo "  · ${arch}"
     GOARCH="$arch" CGO_ENABLED=1 \
-        go build -ldflags='-s -w' -trimpath -o "$out" ./cmd/gcodesim
+        go build -ldflags="${LDFLAGS}" -trimpath -o "$out" ./cmd/gcodesim
     ARCH_BINS+=("$out")
 }
 
@@ -42,7 +48,7 @@ if command -v lipo >/dev/null 2>&1; then
     rm -f "${ARCH_BINS[@]}"
 else
     echo "  (lipo missing — building host-arch only)"
-    CGO_ENABLED=1 go build -ldflags='-s -w' -trimpath -o "$BIN_NAME" ./cmd/gcodesim
+    CGO_ENABLED=1 go build -ldflags="${LDFLAGS}" -trimpath -o "$BIN_NAME" ./cmd/gcodesim
 fi
 
 # ----------------------------------------------------------------- 2. Icon

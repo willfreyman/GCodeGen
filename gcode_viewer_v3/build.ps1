@@ -51,11 +51,17 @@ try {
 }
 
 # ── 3. Build ────────────────────────────────────────────────────────────
-go build -ldflags='-s -w -H windowsgui' -trimpath -o gcodesim.exe .\cmd\gcodesim
+# Inject the current git tag into internal/version.Version so the running
+# binary knows what to compare against the GitHub Releases API.
+$gitVersion = (git describe --tags --always 2>$null)
+if (-not $gitVersion) { $gitVersion = "dev" }
+
+$ldflags = "-s -w -H windowsgui -X gcodegen.local/viewer/internal/version.Version=$gitVersion"
+go build -ldflags="$ldflags" -trimpath -o gcodesim.exe .\cmd\gcodesim
 
 if (Test-Path gcodesim.exe) {
     $size = (Get-Item gcodesim.exe).Length / 1MB
-    Write-Host ("Built gcodesim.exe ({0:N1} MB) with embedded icon + version info" -f $size) -ForegroundColor Green
+    Write-Host ("Built gcodesim.exe ({0:N1} MB), version={1}" -f $size, $gitVersion) -ForegroundColor Green
 } else {
     Write-Host "Build failed -- gcodesim.exe not produced." -ForegroundColor Red
     exit 1
