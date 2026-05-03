@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>GcodeSimV3</string>
+    <key>CFBundleDisplayName</key>
+    <string>GcodeSimV3</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.nightbots10686.gcodesimv3</string>
+    <key>CFBundleVersion</key>
+    <string>3.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>3.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+
+    <key>CFBundleExecutable</key>
+    <string>gcodesim</string>
+    <key>CFBundleIconFile</key>
+    <string>icon.icns</string>
+
+    <!-- Retina / HiDPI displays -->
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <!-- Minimum macOS — 10.13 (High Sierra) covers all Macs that run
+         GLFW + modern OpenGL reliably -->
+    <key>LSMinimumSystemVersion</key>
+    <string>10.13</string>
+
+    <!-- File-association: allow opening .nc / .gcode files via "Open With" -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>G-code program</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>nc</string>
+                <string>gcode</string>
+                <string>tap</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>
