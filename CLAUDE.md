@@ -4,21 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout
 
-Three apps live here. The **modern viewer** (`gcode_viewer_v2/`) is the active development target; the two Tkinter scripts at root are kept working but are not where new features should land unless asked.
+Five apps live here, in two generations. **`gcode_viewer_v3/`** (Go + g3n)
+is the **active development target**; v2 (Python + VTK) is the previous
+reference implementation; the two Tkinter scripts at root are kept working
+but are not where new features should land unless asked.
 
 - `gcodegen.py` — **Editor.** Tkinter sketchpad: draw freehand toolpaths, set per-stroke depths + machine settings, export `.nc`. Stdlib-only. Has its own in-app simulator and finished-product preview windows.
 - `gcode_preview.py` — **Legacy Tk viewer.** Earlier Tkinter-based G-code viewer with a hand-rolled 3D projection on a 2D Canvas. Performance-fixed in Stage 1 of the v2 refactor (see Stage-1 notes below). Kept around for users who can't run VTK.
-- `gcode_viewer_v2/` — **Modern viewer.** VTK + PyQt5 rewrite with real 3D, material-removal heightmap simulation, splash, debug window, view cube, etc. Ships as `GcodeSimV1.exe` via PyInstaller. **This is where new viewer work should land.**
+- `gcode_viewer_v2/` — **Reference viewer (Python).** VTK + PyQt5 with real 3D, material-removal heightmap simulation, splash, debug window, view cube, etc. Ships as `GcodeSimV1.exe` via PyInstaller (~200 MB). The Go port (v3) is a port of this — when something is missing in v3, look at v2 for the spec.
+- `gcode_viewer_v3/` — **Active viewer (Go).** Pure-Go rewrite using the [g3n](https://github.com/g3n/engine) engine. Same features as v2 (toolpath, stock, end-mill, view cube, material-removal heightmap with through-cut, playback controls, options dropdown), but ships as a single ~5 MB `.exe` (vs ~200 MB for v2). **This is where new viewer work should land.**
+- `gcode_viewer_v3_mac/` — **macOS build harness.** Mirrors the v3 source plus a `build.sh` that produces a universal-binary `GcodeSimV3.app`. Source is currently a manual copy of v3; longer-term we'll collapse to a single source tree with two build scripts.
 - `exe/gcodegenV1.0.exe` — bundled editor binary.
 
-There is no shared library between root-level scripts and v2; the v2 viewer's `parser.py` is a clean port of the root scripts' parsing logic with no UI deps.
+There is no shared library between root-level scripts and v2; the v2 viewer's `parser.py` is a clean port of the root scripts' parsing logic with no UI deps. v3's parser is a 1:1 port of v2's.
 
 ## Running
 
 ```
-python gcodegen.py                    # editor (Tk, stdlib-only)
-python gcode_preview.py               # legacy Tk viewer
-python -m gcode_viewer_v2.app         # modern VTK viewer (run from project root)
+python gcodegen.py                                              # editor (Tk, stdlib-only)
+python gcode_preview.py                                         # legacy Tk viewer
+python -m gcode_viewer_v2.app                                   # v2 VTK viewer (run from project root)
+cd gcode_viewer_v3   && go run ./cmd/gcodesim                   # v3 Go viewer (Windows/Linux dev)
+cd gcode_viewer_v3_mac && ./build.sh && open ./GcodeSimV3.app   # v3 Go viewer (macOS, after build)
 ```
 
 The editor auto-opens the Finished Product Preview window 120ms after launch (`window.after(120, open_preview)` in `gcodegen.py`). That window is intentionally non-closable (`WM_DELETE_WINDOW` is bound to a no-op) — it deiconifies/lifts on subsequent calls instead of being recreated.
@@ -96,6 +103,64 @@ gcode_viewer_v2/
 
 **Bench suite** (`bench/`): 13 standalone benchmarks isolating each rendering variable. `python -m gcode_viewer_v2.bench.run_all` runs the full set. Useful for validating perf claims before/after a change. Don't ship in the .exe (already excluded via PyInstaller's static analysis since it doesn't import them).
 
+### `gcode_viewer_v3/` — Go + g3n, the active viewer
+
+```
+gcode_viewer_v3/
+├── go.mod / go.sum             module gcodegen.local/viewer (local — not published)
+├── build.ps1                   one-shot Windows build (go build -ldflags='-s -w -H windowsgui')
+├── cmd/
+│   ├── gcodesim/main.go        production entry — calls ui.Run()
+│   └── g3n_smoke/main.go       single-file API skeleton (build-tag `smoke`, excluded by default)
+├── internal/
+│   ├── parser/                 1:1 port of v2's parser.py + golden tests vs sample.nc
+│   ├── scene/
+│   │   ├── colors.go           5-stop depth gradient lerp
+│   │   ├── path.go             toolpath: cut LineStrips (depth-graded) + dashed rapid Lines
+│   │   ├── stock.go            stock outline (NewStockWireframe — translucent fill removed)
+│   │   ├── tool.go             5-part end-mill assembly (flute / helix / band / shank / LED)
+│   │   ├── view_cube.go        chamfered cube with edge outlines + text labels per face
+│   │   ├── labels.go           bundled FreeSansBold.ttf + texture builder for face labels
+│   │   ├── playback.go         time-driven Move advance with arc-length interpolation
+│   │   ├── removal.go          heightmap material removal (flat-shaded triangulation)
+│   │   └── FreeSansBold.ttf    embedded font (~400 KB) for view-cube labels
+│   ├── ui/
+│   │   ├── window.go           App, scene, camera, animation tick, key handlers
+│   │   ├── orbiter.go          custom Z-up orbit controller (replaces g3n's Y-up OrbitControl)
+│   │   ├── toolbar.go          two-row toolbar + Options dropdown panel
+│   │   └── dialogs.go          sqweek/dialog file open + error message
+└── (gcodesim.exe              gitignored build artifact)
+```
+
+**Key architectural choices that took real debugging to find:**
+
+- **No `engine/app`.** `app.App()` transitively imports `engine/audio/al` and `engine/audio/vorbis`, which embed `cgo LDFLAGS: -lOpenAL32 -lvorbis`. The resulting binary needs `OpenAL32.dll` + `libvorbis.dll` at startup — Windows refuses to load it with "this app can't run on your PC". We bypass app and call `window.Init` + `renderer.NewRenderer` directly. Saves ~3 DLLs from the distribution. **Don't reintroduce app.App().**
+
+- **Custom `Orbiter` (Z-up), not `camera.OrbitControl`.** g3n's OrbitControl has a private `up` field hard-coded to `(0, 1, 0)`. Every `Rotate` re-orients the camera with Y vertical, fighting our CNC-convention Z-up world. Symptoms: view-cube widget feels reversed, hover picks wrong faces. Our `Orbiter` uses (yaw, pitch, distance) about a target with fixed world-Z up. Same controls (left-drag rotate, right-drag pan, scroll zoom).
+
+- **View cube uses perspective, not ortho.** g3n's `Raycaster.SetFromCamera` builds a single-origin convergent ray (correct for perspective, wrong for ortho — ortho needs parallel rays). Picking on an ortho cube cam returned wrong faces for off-center clicks. Switched cube cam to narrow-FOV (30°) perspective; visually still reads as orthographic but picking is correct.
+
+- **Mouse events through `gui.Manager().SubscribeID`, not `win.Subscribe`.** gui.Manager only forwards mouse events to non-panel subscribers when no GUI panel is under the cursor. Subscribing the orbiter via gui.Manager means dragging the speed/progress sliders or clicking buttons doesn't also rotate the camera. `SetCursorFocus(o)` on mouse-down keeps cursor events flowing to the orbiter for the rest of a drag even if the cursor wanders over a panel.
+
+- **Heightmap uses flat shading via vertex duplication.** Each triangle owns its own three vertex copies sharing one face normal — no averaging across seams. Cut walls render as crisp facets (the "rigid machined" look). Cost is ~6× more vertices but still fast on typical grids (~25–110K verts).
+
+- **Material thickness ("through cut") via `through[]` markers + dropped quads.** `Cut()` flags cells whose Z reaches `-MaterialThickness`. `RefreshMesh` emits degenerate triangles for fully-through quads, which the GPU draws as nothing — produces real holes in the mesh, so cutout parts visually separate from the surrounding stock.
+
+- **Toolbar dropdown panel is a SIBLING of the toolbar (not a child).** g3n clips child panels to parent bounds. The Options dropdown extends below the 64-px toolbar so it'd be clipped to invisibility if parented. We expose `Toolbar.OptionsPanel` and the caller adds it to `sceneRoot` separately.
+
+- **g3n texture FlipY is on by default.** The Standard vertex shader does `texcoord.y = 1.0 - texcoord.y` when the texture's FlipY flag is set. Our font.DrawText image already has row 0 at top, so we call `tex.SetFlipY(false)` on label textures. Without this, view-cube labels render upside down.
+
+- **`material.Basic` IGNORES textures.** Its fragment shader is literally `FragColor = vec4(Color, 1.0)`. Any `mat.AddTexture` call on Basic is silently dropped. Use `material.Standard` for textured meshes (with vertex normals so lighting works).
+
+### `gcode_viewer_v3_mac/` — macOS build harness
+
+Mirrors v3's source tree plus:
+- `build.sh` — universal-binary build (arm64 + amd64 via `lipo`), auto icon conversion (`icon.ico` → `icon.icns` via macOS's built-in `sips` + `iconutil`), bundles into `GcodeSimV3.app`.
+- `Info.plist` — bundle metadata, Retina support, `.nc/.gcode/.tap` file association.
+- `icon.ico` — kept for the build script (converted to `icon.icns` at build time).
+
+Source under `cmd/` and `internal/` is currently a manual copy of `gcode_viewer_v3/`. **When making changes to v3, update both trees** until we collapse to a single source. `build.sh` runs only on a Mac (CGo + GLFW require native clang); `gcodesim`/`GcodeSimV3.app`/`icon.icns` are gitignored build artifacts.
+
 ### Cross-cutting things that have already been investigated
 
 - **3.8 fps → 62 fps fix**: was the heightmap normals filter + 1-mm-everywhere cell size on big stocks. The two perf fixes above (cell scaling + flat shading) brought the same workload to 62 fps in `bench_13`.
@@ -107,13 +172,13 @@ gcode_viewer_v2/
 
 ## Building the .exe binaries
 
-`gcode_viewer_v2/pyinstaller.spec` is the source of truth. From inside `gcode_viewer_v2/`:
+The canonical build path is `build.bat` at the repo root — it `pip install`s deps, runs PyInstaller against the spec, and copies the result to `exe/GcodeSimV1.exe` for distribution. To build the viewer manually, from inside `gcode_viewer_v2/`:
 
 ```
 pyinstaller pyinstaller.spec --noconfirm --clean
 ```
 
-Output: `gcode_viewer_v2/dist/GcodeSimV1.exe` (~180-220 MB, single file, no end-user installs).
+Output: `gcode_viewer_v2/dist/GcodeSimV1.exe` (~180-220 MB, single file, no end-user installs). `build.bat` publishes a copy to `exe/GcodeSimV1.exe`, which is **gitignored** — the viewer binary ships via GitHub Releases (it's over GitHub's per-file size limit). Only the smaller editor binary `exe/gcodegenV1.0.exe` is committed.
 
 The spec uses `collect_submodules('gcode_viewer_v2')` to force-bundle the entire package. `pathex` includes both the spec dir AND its parent so `from gcode_viewer_v2.X import Y` resolves at analysis time. Don't change either of those without understanding the "No module named 'gcode_viewer_v2'" PyInstaller pitfall this guards against.
 

@@ -1,14 +1,19 @@
 # CNC G-Code Toolchain
 
-Two-app toolchain for hobbyist CNC routers:
+A two-piece toolchain for hobbyist CNC routers:
 
 1. **`gcodegen.py`** — a Tkinter sketchpad that turns freehand canvas strokes
    into a `.nc` G-code program. Set per-stroke depth, feeds, RPM, safe-Z;
    export and run.
-2. **`gcode_viewer_v2/`** (distributed as **`GcodeSimV1.exe`**) — a 3D
-   simulator that loads any `.nc` file, plays the toolpath through an
-   animated end-mill, and removes material from a stock block in real time
-   so you can sanity-check a program before sending it to a real machine.
+2. **`gcode_viewer_v3/`** (distributed as **`GcodeSimV3` / `gcodesim.exe`**) — a
+   pure-Go 3D simulator that loads any `.nc` file, plays the toolpath through
+   an animated end-mill, and removes material from a stock block in real time
+   (with optional through-cut when material thickness is set) so you can
+   sanity-check a program before sending it to a real machine.
+
+The earlier Python+VTK viewer (`gcode_viewer_v2/` → `GcodeSimV1.exe`) is kept
+as a reference implementation; the Go viewer (v3) is the active development
+target. v3 ships as a **single ~5 MB binary** vs ~200 MB for v2.
 
 ## Quick start
 
@@ -22,52 +27,56 @@ Click + drag to draw toolpaths. Drag the orange dot to set machine origin,
 the corner handles to resize the perimeter. Pick depths, feeds, RPM, and
 hit **Generate G-code** to export.
 
-### Viewer — simulate a `.nc` file (VTK 3D)
+### Viewer (v3, Go) — Windows
 
 ```cmd
-cd gcode_viewer_v2
-pip install -r requirements.txt
-python -m gcode_viewer_v2.app
+cd gcode_viewer_v3
+.\build.ps1                 :: produces gcodesim.exe (~5 MB)
+.\gcodesim.exe              :: opens the viewer, then File → Open .nc
 ```
 
-`File → Open .nc`, then `Play`. Rotate with left-drag, pan with
-shift-left-drag, zoom with the wheel. The labeled view-cube in the
-top-right snaps the camera to standard views; click a corner of the cube
-for an isometric.
+Requires **Go 1.22+** and a C compiler (TDM-GCC or MSYS2 mingw-w64) for CGo.
 
-A stripped-down legacy Tk-based viewer (`gcode_preview.py`) is kept for
-users with older machines that can't run VTK; same file format.
+### Viewer (v3, Go) — macOS
 
-## Get the viewer
+```sh
+cd gcode_viewer_v3_mac
+./build.sh                  # produces GcodeSimV3.app (universal arm64+amd64)
+open ./GcodeSimV3.app
+```
 
-Two paths, pick whichever's easier:
+Requires **Go 1.22+** and Xcode CLI tools (`xcode-select --install`).
+First launch may show "unidentified developer" — right-click → Open once
+to bypass Gatekeeper.
 
-**Pre-built binary** (recommended for end users) — download
-`GcodeSimV1.exe` from the latest [GitHub Release][releases]. Double-click
-to run. Nothing else to install.
+### Controls (both platforms)
 
-**Build from source** (one command, takes ~2 min):
+* **Open** / **Ctrl+O** — load a `.nc` / `.gcode` / `.tap` file
+* **Play / Pause** / **Spacebar** — animate the toolpath
+* **Reset** — restart playback and rebuild the carved surface
+* **Speed slider** — 0.5× to 50× playback speed
+* **Bit dia** — type a value (mm) and press Enter or **Set** to rebuild the tool
+* **Options ▾** — material thickness for through-cut (accepts `19.05`, `0.75in`, or `0.75"`)
+* **Progress bar** — slidable (drag to scrub through the program)
+* **Mouse**: left-drag orbit, right-drag pan, scroll zoom
+* **View cube**: hover any face → highlights, click → snaps the main camera
+
+### Legacy viewers (kept for reference)
 
 ```cmd
-build.bat
+python gcode_preview.py                  :: Tkinter+stdlib, no GPU needed
+cd gcode_viewer_v2 && python -m gcode_viewer_v2.app   :: VTK + PyQt5
 ```
 
-Requires Python 3.10+ on `PATH`. The script installs `vtk`, `PyQt5`,
-`numpy`, and `pyinstaller` into the active Python environment, runs
-PyInstaller against `gcode_viewer_v2/pyinstaller.spec`, and copies the
-output to `exe\GcodeSimV1.exe` for distribution.
+## Get the viewer (pre-built)
 
-Use a virtual env if you want isolation:
+Pre-built binaries for the v3 viewer are published on the
+[GitHub Release][releases] page when there's a tagged release —
+`gcodesim.exe` for Windows and `GcodeSimV3.app.zip` for macOS. Otherwise,
+build from source as shown above (one command).
 
-```cmd
-python -m venv .venv
-.venv\Scripts\activate
-build.bat
-```
-
-The editor binary `exe/gcodegenV1.0.exe` is committed to the repo
-directly (only ~10 MB). The viewer binary is excluded — it's 130 MB,
-over GitHub's per-file limit, and rebuilds deterministically from source.
+The editor binary `exe/gcodegenV1.0.exe` is committed directly (only
+~10 MB). All viewer binaries are gitignored — they rebuild from source.
 
 [releases]: https://github.com/willfreyman/GCodeGen/releases
 
@@ -75,37 +84,37 @@ over GitHub's per-file limit, and rebuilds deterministically from source.
 
 ```
 GCodeGen/
-├── README.md             ← you are here
-├── CLAUDE.md             ← Claude Code guidance (architecture notes)
+├── README.md                ← you are here
+├── CLAUDE.md                ← Claude Code guidance (architecture notes)
 ├── .gitignore
-├── icon.ico              ← shared app icon
+├── icon.ico                 ← shared app icon
 │
-├── gcodegen.py           ← Tkinter sketch-to-G-code editor
-├── gcode_preview.py      ← legacy Tkinter viewer (Stage-1 perf-fixed)
+├── gcodegen.py              ← Tkinter sketch-to-G-code editor
+├── gcode_preview.py         ← legacy Tkinter viewer
 │
-├── gcode_viewer_v2/      ← the modern VTK + PyQt5 viewer (becomes GcodeSimV1.exe)
-│   ├── app.py            ← entry point with splash
-│   ├── parser.py         ← G-code state-machine parser (pure Python)
-│   ├── scene/            ← VTK scene actors
-│   │   ├── path.py       ← toolpath line plot
-│   │   ├── stock.py      ← stock-block outline
-│   │   ├── tool.py       ← realistic CNC bit (multi-part assembly)
-│   │   ├── removal.py    ← heightmap material-removal sim
-│   │   └── view_cube.py  ← interactive labeled view cube (chamfered)
-│   ├── ui/
-│   │   ├── main_window.py
-│   │   ├── controls.py   ← Z-axis indicator widget
-│   │   └── debug_window.py ← floating debug window (FPS, logs, system info)
-│   ├── assets/splash.png
-│   ├── bench/            ← FPS benchmark suite (dev only)
-│   ├── requirements.txt  ← vtk, PyQt5, numpy
-│   ├── pyinstaller.spec  ← build recipe
-│   └── README.md         ← v2-specific notes
+├── gcode_viewer_v3/         ← active viewer (Go + g3n) — Windows/Linux dev
+│   ├── go.mod
+│   ├── build.ps1            ← one-shot Windows build
+│   ├── cmd/gcodesim/        ← entry point
+│   └── internal/
+│       ├── parser/          ← G-code parser (1:1 port of v2's parser.py)
+│       ├── scene/           ← actors: path, stock, tool, view cube, heightmap
+│       └── ui/              ← window, toolbar, orbiter, dialogs
 │
-├── build.bat             ← one-command build of GcodeSimV1.exe
+├── gcode_viewer_v3_mac/     ← macOS build harness (mirrors v3 source + build.sh + Info.plist)
+│
+├── gcode_viewer_v2/         ← reference viewer (Python + VTK + PyQt5)
+│   ├── app.py
+│   ├── parser.py
+│   ├── scene/{path, stock, tool, removal, view_cube}.py
+│   ├── ui/{main_window, controls, debug_window}.py
+│   ├── bench/               ← FPS benchmark suite (dev only)
+│   └── pyinstaller.spec     ← v2 build recipe
+│
+├── build.bat                ← one-command build of v2's GcodeSimV1.exe
 └── exe/
-    ├── GcodeSimV1.exe    ← built locally by build.bat (gitignored — 130 MB)
-    └── gcodegenV1.0.exe  ← bundled editor (committed, ~10 MB)
+    ├── GcodeSimV1.exe       ← v2 PyInstaller build (gitignored — 200 MB)
+    └── gcodegenV1.0.exe     ← bundled editor (committed, ~10 MB)
 ```
 
 ## What's deliberately out of scope

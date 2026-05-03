@@ -32,6 +32,26 @@ gcode_viewer_v2/build/
 gcode_viewer_v2/dist/
 exe/GcodeSimV1.exe
 
+# ── Go (gcode_viewer_v3 / gcode_viewer_v3_mac) ────────────────────────────
+# Build artifacts. The Go binaries rebuild quickly from source on each
+# platform — no point checking the platform-specific outputs into git.
+gcode_viewer_v3/gcodesim
+gcode_viewer_v3/gcodesim.exe
+gcode_viewer_v3_mac/gcodesim
+gcode_viewer_v3_mac/gcodesim-arm64
+gcode_viewer_v3_mac/gcodesim-amd64
+gcode_viewer_v3_mac/GcodeSimV3.app/
+gcode_viewer_v3_mac/icon.icns
+
+# Compiled binaries anywhere — but keep the small bundled editor exe.
+*.exe
+!exe/gcodegenV1.0.exe
+*.app/
+
+# Go module artifacts (not the lockfile go.sum, which we DO commit)
+gcode_viewer_v3/vendor/
+gcode_viewer_v3_mac/vendor/
+
 # ── IDE / editor noise ────────────────────────────────────────────────────
 .vscode/
 .idea/
