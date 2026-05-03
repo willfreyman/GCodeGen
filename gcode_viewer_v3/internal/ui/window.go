@@ -97,8 +97,13 @@ func Run(initialPath string) {
 	sceneRoot.Add(state.toolbar.OptionsPanel)
 
 	resize := func(_ string, _ interface{}) {
+		// On HiDPI displays (macOS Retina especially) the framebuffer is
+		// 2× the window size. GL viewport must use framebuffer (physical)
+		// pixels; toolbar width and camera aspect use window (logical)
+		// pixels — those match cursor coords for hit-testing.
 		w, h := win.GetSize()
-		win.Gls().Viewport(0, 0, int32(w), int32(h))
+		fbW, fbH := win.GetFramebufferSize()
+		win.Gls().Viewport(0, 0, int32(fbW), int32(fbH))
 		cam.SetAspect(float32(w) / float32(h))
 		state.toolbar.Resize(float32(w))
 	}
@@ -159,7 +164,15 @@ func Run(initialPath string) {
 		dt := now.Sub(lastTick).Seconds()
 		lastTick = now
 
+		// Window size = logical/cursor pixels. Framebuffer size = physical
+		// (2× on HiDPI/Retina displays). All GL viewport/scissor calls use
+		// framebuffer pixels; cursor hit-tests stay in window pixels.
 		w, h := win.GetSize()
+		fbW, fbH := win.GetFramebufferSize()
+		scale := float32(fbW) / float32(w)
+		if scale <= 0 {
+			scale = 1
+		}
 
 		// Refresh focal from the orbiter (handles user pans).
 		state.focal = state.orbit.Target()
@@ -171,25 +184,29 @@ func Run(initialPath string) {
 		state.cube.SyncToMainCamera(cam, state.focal)
 		state.updateCubeHover(w, h)
 
-		// Pass 1: main scene
-		win.Gls().Viewport(0, 0, int32(w), int32(h))
+		// Pass 1: main scene, full framebuffer viewport
+		win.Gls().Viewport(0, 0, int32(fbW), int32(fbH))
 		win.Gls().Clear(gls.DEPTH_BUFFER_BIT | gls.STENCIL_BUFFER_BIT | gls.COLOR_BUFFER_BIT)
 		if err := rend.Render(sceneRoot, cam); err != nil {
 			fmt.Println("render error:", err)
 		}
 
-		// Pass 2: view cube into top-right corner viewport (just below toolbar)
-		cubeX := int32(w) - cubeViewportSize
-		cubeY := int32(h) - cubeViewportSize - int32(toolbarHeight)
+		// Pass 2: view cube into top-right corner — sized in framebuffer
+		// pixels via the DPI scale so it lines up with the toolbar even
+		// on HiDPI displays.
+		cubeSizePhys := int32(float32(cubeViewportSize) * scale)
+		toolbarPhys := int32(float32(toolbarHeight) * scale)
+		cubeX := int32(fbW) - cubeSizePhys
+		cubeY := int32(fbH) - cubeSizePhys - toolbarPhys
 		win.Gls().Enable(gls.SCISSOR_TEST)
-		win.Gls().Scissor(cubeX, cubeY, cubeViewportSize, cubeViewportSize)
-		win.Gls().Viewport(cubeX, cubeY, cubeViewportSize, cubeViewportSize)
+		win.Gls().Scissor(cubeX, cubeY, cubeSizePhys, cubeSizePhys)
+		win.Gls().Viewport(cubeX, cubeY, cubeSizePhys, cubeSizePhys)
 		win.Gls().Clear(gls.DEPTH_BUFFER_BIT)
 		if err := rend.Render(state.cube.Scene, state.cube.Camera); err != nil {
 			fmt.Println("cube render error:", err)
 		}
 		win.Gls().Disable(gls.SCISSOR_TEST)
-		win.Gls().Viewport(0, 0, int32(w), int32(h))
+		win.Gls().Viewport(0, 0, int32(fbW), int32(fbH))
 
 		win.SwapBuffers()
 		win.PollEvents()
