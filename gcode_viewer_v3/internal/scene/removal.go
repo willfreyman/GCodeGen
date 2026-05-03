@@ -191,6 +191,21 @@ func (h *Heightmap) Cut(toolX, toolY, toolZ, bitRadius float64) bool {
 	return modified
 }
 
+// Reset returns the heightmap to its un-carved state — every cell back to
+// TopZ and the through[] markers cleared. Used by the scrub-replay path so
+// dragging the progress bar backward actually un-cuts material (the
+// running heightmap stores only current state, no per-tick history).
+//
+// Doesn't touch grid dimensions or MaterialThickness — call this when you
+// want to keep the same stock config but start fresh on cuts.
+func (h *Heightmap) Reset() {
+	topZ := float32(h.TopZ)
+	for i := range h.heights {
+		h.heights[i] = topZ
+		h.through[i] = false
+	}
+}
+
 // SetMaterialThickness sets (or clears, if mm <= 0) the stock thickness used
 // to detect "cut through" cells. Re-evaluates every cell against the new
 // bottom and updates the through[] array; call RefreshMesh afterwards to

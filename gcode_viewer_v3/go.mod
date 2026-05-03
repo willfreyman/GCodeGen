@@ -1,10 +1,11 @@
 module gcodegen.local/viewer
 
-go 1.22
+go 1.25.0
 
 require (
 	github.com/g3n/engine v0.2.1-0.20260109204552-11eb4fd38acd
 	github.com/sqweek/dialog v0.0.0-20240226140203-065105509627
+	golang.org/x/sys v0.43.0
 )
 
 require (

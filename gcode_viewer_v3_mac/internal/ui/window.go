@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"time"
@@ -468,13 +469,100 @@ func (s *sceneState) scrubTo(fraction float64) {
 	s.playback.SetProgress(fraction)
 	pos := s.playback.CurrentPosition()
 	s.tool.SetPosition(pos.X, pos.Y, pos.Z)
-	// Reset the cut anchor to the scrub position so resuming play doesn't
-	// erode a phantom segment from the pre-scrub location to the new one.
-	// Note: scrubbing back doesn't un-cut already-eroded material — to
-	// undo cuts the user has to Reset (which rebuilds the heightmap).
 	s.lastToolPos = pos
 	if s.playback.MoveIndex < len(s.moves) {
 		s.tool.SetSpindle(s.moves[s.playback.MoveIndex].Spindle)
+	}
+
+	// Make the carved surface match the scrub position. The heightmap
+	// stores only current state (no per-tick undo history), so we reset
+	// it and replay every cut up to the new playback position.
+	s.replayCutsTo(s.playback.MoveIndex, s.playback.MoveT)
+}
+
+// replayCutsTo rebuilds the heightmap from scratch by re-running every
+// cutting move from the start of the program up to (moveIndex, moveT).
+// Called by scrubTo so the rendered surface matches the playback position
+// even when the user drags the slider backward.
+//
+// Cost scales linearly with cut count. For a typical hobbyist program
+// (≤ a few thousand cutting moves) it stays under ~100 ms — fast enough
+// to feel like a live response to the slider drag. For huge programs
+// it could become noticeable; if so we can add periodic snapshots later
+// and replay only from the nearest one.
+func (s *sceneState) replayCutsTo(moveIndex int, moveT float64) {
+	if s.heightmap == nil {
+		return
+	}
+	s.heightmap.Reset()
+	radius := s.bitDiameter / 2
+
+	// Replay every fully-completed cutting move.
+	for i := 0; i < moveIndex && i < len(s.moves); i++ {
+		m := s.moves[i]
+		if m.Kind == "G0" || !m.Spindle {
+			continue
+		}
+		for j := 1; j < len(m.Points); j++ {
+			s.heightmap.CutSegment(m.Points[j-1], m.Points[j], radius)
+		}
+	}
+
+	// Partial cut for the move currently in progress: walk its Points
+	// list by arc-length up to moveT, cutting each whole segment that
+	// falls fully inside, and a partial segment for the final piece.
+	if moveIndex < len(s.moves) && moveT > 0 {
+		m := s.moves[moveIndex]
+		if m.Kind != "G0" && m.Spindle && len(m.Points) >= 2 {
+			cutPartialMove(s.heightmap, m, moveT, radius)
+		}
+	}
+
+	s.heightmap.RefreshMesh()
+	s.refreshCtr = 0
+}
+
+// cutPartialMove cuts the heightmap along the move's Points polyline up to
+// the parameter `t` (arc-length fraction in [0, 1]). Mirrors the
+// interpolation logic in scene.Playback so the scrubbed surface matches
+// the same visual position the live tick would draw.
+func cutPartialMove(h *scene.Heightmap, m *parser.Move, t float64, radius float64) {
+	pts := m.Points
+	if len(pts) < 2 {
+		return
+	}
+
+	total := 0.0
+	for i := 1; i < len(pts); i++ {
+		dx := pts[i].X - pts[i-1].X
+		dy := pts[i].Y - pts[i-1].Y
+		dz := pts[i].Z - pts[i-1].Z
+		total += math.Sqrt(dx*dx + dy*dy + dz*dz)
+	}
+	if total <= 0 {
+		return
+	}
+	target := t * total
+
+	walked := 0.0
+	for i := 1; i < len(pts); i++ {
+		dx := pts[i].X - pts[i-1].X
+		dy := pts[i].Y - pts[i-1].Y
+		dz := pts[i].Z - pts[i-1].Z
+		segLen := math.Sqrt(dx*dx + dy*dy + dz*dz)
+
+		if walked+segLen >= target {
+			localT := (target - walked) / segLen
+			interp := parser.Point{
+				X: pts[i-1].X + dx*localT,
+				Y: pts[i-1].Y + dy*localT,
+				Z: pts[i-1].Z + dz*localT,
+			}
+			h.CutSegment(pts[i-1], interp, radius)
+			return
+		}
+		h.CutSegment(pts[i-1], pts[i], radius)
+		walked += segLen
 	}
 }
 
