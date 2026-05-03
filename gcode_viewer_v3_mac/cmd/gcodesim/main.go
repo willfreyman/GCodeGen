@@ -24,6 +24,11 @@ func main() {
 	var initialPath string
 	if flag.NArg() >= 1 {
 		initialPath = flag.Arg(0)
+	} else if path := ui.CapturedOpenFile(); path != "" {
+		// macOS: Launch Services delivered a file via Apple Event
+		// (double-clicked .nc, dragged onto app icon, Open With...).
+		// On non-Mac builds CapturedOpenFile() always returns "".
+		initialPath = path
 	}
 	ui.Run(initialPath)
 }
