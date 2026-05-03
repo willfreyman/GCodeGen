@@ -54,7 +54,16 @@
                 <array>
                     <string>nc</string>
                     <string>gcode</string>
+                    <string>ngc</string>
                     <string>tap</string>
+                    <string>cnc</string>
+                    <string>gco</string>
+                    <string>g</string>
+                    <string>mpf</string>
+                    <string>nci</string>
+                    <string>tab</string>
+                    <string>eia</string>
+                    <string>dnc</string>
                 </array>
             </dict>
         </dict>
@@ -77,7 +86,16 @@
             <array>
                 <string>nc</string>
                 <string>gcode</string>
+                <string>ngc</string>
                 <string>tap</string>
+                <string>cnc</string>
+                <string>gco</string>
+                <string>g</string>
+                <string>mpf</string>
+                <string>nci</string>
+                <string>tab</string>
+                <string>eia</string>
+                <string>dnc</string>
             </array>
         </dict>
     </array>
