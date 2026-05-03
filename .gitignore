@@ -41,6 +41,7 @@ gcode_viewer_v3_mac/gcodesim
 gcode_viewer_v3_mac/gcodesim-arm64
 gcode_viewer_v3_mac/gcodesim-amd64
 gcode_viewer_v3_mac/GcodeSimV3.app/
+gcode_viewer_v3_mac/GcodeSimV3.app.zip
 gcode_viewer_v3_mac/icon.icns
 
 # Compiled binaries anywhere — but keep the small bundled editor exe.

@@ -86,6 +86,17 @@ SIZE=$(du -sh "$APP_DIR" | cut -f1)
 echo
 echo "✓ Built $APP_DIR ($SIZE)"
 
+# ----------------------------------------- 3.5 Zip for safe transfer
+# A .app is a directory; emailing/Slacking/Discord-ing the raw folder
+# usually flattens it or strips the executable bit, leaving the receiver
+# with a bundle that won't launch. Distribute the .zip instead — Finder
+# unpacks it back to a proper .app on the other end.
+ZIP_NAME="${APP_NAME}.app.zip"
+echo "→ Packaging $ZIP_NAME for distribution..."
+rm -f "$ZIP_NAME"
+zip -qry "$ZIP_NAME" "$APP_DIR"
+echo "  · $ZIP_NAME ready ($(du -h "$ZIP_NAME" | cut -f1)) — share this, not the raw .app folder"
+
 # ----------------------------------------------- 4. Register with Launch Services
 # Tell macOS our app exists and owns the .nc/.gcode/.tap UTIs. Without
 # this, double-clicking a .nc opens the system's default text editor

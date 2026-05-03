@@ -8,6 +8,17 @@ macOS-specific pieces are the build script, the `Info.plist`, and the
 `.app` bundle layout. Keeping them in their own directory means the
 Windows tree stays clean and the Mac tree stays self-documenting.
 
+## I just want to use it (someone sent me a zip)
+
+Double-click `GcodeSimV3.app.zip`. Finder unpacks it to `GcodeSimV3.app`.
+Right-click that → **Open** → confirm (one-time Gatekeeper bypass since
+we're unsigned). After that it opens normally on every double-click.
+
+If the sender gave you the **raw `.app` folder** (not a zip), it almost
+certainly won't launch — `.app` bundles need to travel as a zip to
+preserve the executable bit and bundle structure. Ask for it as a zip,
+or follow the next section to build it yourself.
+
 ## Building (on a Mac)
 
 You need **a Mac** to build this — Go can't reliably cross-compile CGo
@@ -28,7 +39,9 @@ cd /path/to/gcode_viewer_v3_mac
 ./build.sh
 ```
 
-Output: `GcodeSimV3.app` in the current directory.
+Output: `GcodeSimV3.app` (the runnable bundle) **and**
+`GcodeSimV3.app.zip` (the version to share with teammates) in the
+current directory.
 
 The script:
 1. Compiles a **universal binary** (arm64 + amd64) so one `.app` runs on
@@ -38,6 +51,11 @@ The script:
    `iconutil` (no extra dependencies needed).
 3. Assembles the `.app` bundle structure with `Contents/MacOS/gcodesim`,
    `Contents/Info.plist`, and `Contents/Resources/icon.icns`.
+4. Zips the `.app` so it can be sent over Discord / Slack / email
+   without losing the executable bit (which happens if the raw folder
+   travels through anything that doesn't understand `.app` bundles).
+5. Runs `lsregister -f` so macOS immediately associates `.nc / .gcode /
+   .tap` files with this app (instead of TextEdit).
 
 ## Running
 
