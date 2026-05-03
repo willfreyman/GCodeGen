@@ -24,6 +24,11 @@ echo "→ Building $BIN_NAME (CGO + universal-binary if possible)..."
 # Build a universal binary (arm64 + amd64) so the same .app runs on Apple
 # Silicon and Intel Macs. Requires both arch toolchains; falls back to a
 # single-arch build if `lipo` or one of the targets isn't available.
+# Sync module dependencies. Catches imports added since the last build
+# (e.g. new top-level modules) — `go build` alone won't auto-fetch
+# new top-level modules, only transitive ones already in go.sum.
+go mod tidy
+
 # Inject the most recent git tag so the running binary can compare itself
 # against the latest GitHub release on startup. --abbrev=0 returns the
 # nearest tag without the offset suffix, so a build one commit past

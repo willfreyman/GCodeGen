@@ -40,6 +40,12 @@ if (-not (Get-Command goversioninfo -ErrorAction SilentlyContinue)) {
     }
 }
 
+# Sync module dependencies. Catches imports that were added since the
+# last build (e.g. golang.org/x/sys/windows/registry on the
+# --register-file-types path) — `go build` alone won't auto-fetch new
+# top-level modules, only transitive ones already in go.sum.
+go mod tidy
+
 # ── 2. Generate resource_windows_*.syso for the icon + version metadata ─
 # Use -platform-specific so the .syso files are named resource_windows_amd64.syso
 # (Windows-only); cross-builds for other OSes won't try to link them.
