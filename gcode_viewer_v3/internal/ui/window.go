@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/g3n/engine/camera"
@@ -19,13 +20,31 @@ import (
 	"gcodegen.local/viewer/internal/version"
 )
 
-// windowTitle composes the title-bar string. If `latest` is non-empty and
-// differs from `current`, includes an "→ vX.Y.Z available" hint.
+// windowTitle composes the title-bar string. Format:
+//
+//	GcodeSim V3.0.0 | Nightbots 10686 | 416aab
+//
+// or, when a newer release is detected on GitHub:
+//
+//	GcodeSim V3.0.0 → V3.0.1 available | Nightbots 10686 | 416aab
 func windowTitle(current, latest string) string {
+	cur := displayVersion(current)
 	if latest != "" && latest != current {
-		return "GcodeSimV3 " + current + " → " + latest + " available | Nightbots 10686 | 416aab"
+		return "GcodeSim " + cur + " → " + displayVersion(latest) + " available | Nightbots 10686 | 416aab"
 	}
-	return "GcodeSimV3 " + current + " | Nightbots 10686 | 416aab"
+	return "GcodeSim " + cur + " | Nightbots 10686 | 416aab"
+}
+
+// displayVersion normalizes a git tag (typically "v3.0.0" with a lowercase
+// leading 'v', the git/semver convention) into the display string we want
+// in the title bar ("V3.0.0"). Returns "(dev)" for unversioned local
+// builds — the binary that wasn't built via build.bat / build.sh, so no
+// -ldflags injection happened.
+func displayVersion(v string) string {
+	if v == "" || v == "dev" {
+		return "(dev)"
+	}
+	return "V" + strings.TrimLeft(v, "vV")
 }
 
 // Default bit diameter (mm) until the user changes it via the toolbar entry.
