@@ -31,7 +31,35 @@
     <key>LSMinimumSystemVersion</key>
     <string>10.13</string>
 
-    <!-- File-association: allow opening .nc / .gcode files via "Open With" -->
+    <!-- File-association: declare a custom UTI for G-code files so macOS
+         knows our app owns these extensions, then bind that UTI in
+         CFBundleDocumentTypes. The previous setup used the generic
+         public.plain-text UTI, which TextEdit/every-other-text-editor
+         also claims — so .nc files defaulted to TextEdit. -->
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.nightbots10686.gcode</string>
+            <key>UTTypeDescription</key>
+            <string>G-code program</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>nc</string>
+                    <string>gcode</string>
+                    <string>tap</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
+
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
@@ -39,9 +67,11 @@
             <string>G-code program</string>
             <key>CFBundleTypeRole</key>
             <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
             <key>LSItemContentTypes</key>
             <array>
-                <string>public.plain-text</string>
+                <string>com.nightbots10686.gcode</string>
             </array>
             <key>CFBundleTypeExtensions</key>
             <array>

@@ -85,9 +85,25 @@ chmod +x "$APP_DIR/Contents/MacOS/$BIN_NAME"
 SIZE=$(du -sh "$APP_DIR" | cut -f1)
 echo
 echo "✓ Built $APP_DIR ($SIZE)"
+
+# ----------------------------------------------- 4. Register with Launch Services
+# Tell macOS our app exists and owns the .nc/.gcode/.tap UTIs. Without
+# this, double-clicking a .nc opens the system's default text editor
+# instead of GcodeSimV3 (the OS reads our Info.plist on registration,
+# not on every file open).
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [ -x "$LSREGISTER" ]; then
+    echo "→ Registering with Launch Services..."
+    "$LSREGISTER" -f "$(pwd)/$APP_DIR" >/dev/null 2>&1 || true
+    echo "  · done — .nc / .gcode / .tap files now associate with GcodeSimV3"
+fi
+
 echo
 echo "  Run:    open ./$APP_DIR"
 echo "  Or:     double-click in Finder."
 echo
 echo "First launch may show 'unidentified developer' (we're unsigned)."
 echo "Right-click → Open the first time to bypass Gatekeeper."
+echo
+echo "If .nc files still open in TextEdit:"
+echo "  Right-click any .nc → Get Info → Open with: GcodeSimV3 → Change All..."
