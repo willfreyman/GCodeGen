@@ -199,7 +199,7 @@ func Run(initialPath string) {
 		cubeX := int32(fbW) - cubeSizePhys
 		cubeY := int32(fbH) - cubeSizePhys - toolbarPhys
 		win.Gls().Enable(gls.SCISSOR_TEST)
-		win.Gls().Scissor(cubeX, cubeY, cubeSizePhys, cubeSizePhys)
+		win.Gls().Scissor(cubeX, cubeY, uint32(cubeSizePhys), uint32(cubeSizePhys))
 		win.Gls().Viewport(cubeX, cubeY, cubeSizePhys, cubeSizePhys)
 		win.Gls().Clear(gls.DEPTH_BUFFER_BIT)
 		if err := rend.Render(state.cube.Scene, state.cube.Camera); err != nil {
