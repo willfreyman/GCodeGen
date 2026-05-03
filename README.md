@@ -80,6 +80,30 @@ The editor binary `exe/gcodegenV1.0.exe` is committed directly (only
 
 [releases]: https://github.com/willfreyman/GCodeGen/releases
 
+## Publishing a new release
+
+After building both binaries on their native platforms, upload as release
+assets so teammates can download instead of building from source.
+Requires `gh` CLI (`brew install gh` / `winget install GitHub.cli`,
+then `gh auth login` once).
+
+```sh
+# Pick a version tag
+TAG=v3.0.1
+
+# Create the release (do this once per version)
+gh release create $TAG --title "GcodeSimV3 $TAG" --notes "What changed: ..."
+
+# Upload Windows binary (run after .\build.bat on Windows)
+gh release upload $TAG gcode_viewer_v3/gcodesim.exe --clobber
+
+# Upload macOS bundle (run after ./build.sh on Mac)
+gh release upload $TAG gcode_viewer_v3_mac/GcodeSimV3.app.zip --clobber
+```
+
+`--clobber` lets you re-upload if you build a new version of the same
+asset; drop it if you want uploads to fail on duplicate.
+
 ## Repository layout
 
 ```
