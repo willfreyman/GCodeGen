@@ -220,10 +220,16 @@ func Run(initialPath string) {
 
 		// Pick up the update-check result if it arrived this frame and
 		// stamp the title bar. Non-blocking — most frames will hit the
-		// default branch and skip.
+		// default branch and skip. Then prompt the user (modal yes/no)
+		// to open the release page in their browser. Yes → browser
+		// launches at the release tag's URL. No → just the title-bar
+		// hint stays.
 		select {
 		case latest := <-updateCheckCh:
 			win.SetTitle(windowTitle(version.Version, latest))
+			if promptUpdateAvailable(version.Version, latest) {
+				openReleasesPage(latest)
+			}
 		default:
 		}
 
