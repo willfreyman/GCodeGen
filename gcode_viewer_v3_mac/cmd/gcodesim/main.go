@@ -15,12 +15,36 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"os"
 
 	"gcodegen.local/viewer/internal/ui"
 )
 
 func main() {
+	registerFlag := flag.Bool("register-file-types", false,
+		"Windows: register .nc/.gcode/etc with this exe so double-click opens in GcodeSim, then exit.")
+	unregisterFlag := flag.Bool("unregister-file-types", false,
+		"Windows: undo --register-file-types and exit.")
 	flag.Parse()
+
+	switch {
+	case *registerFlag:
+		if err := ui.RegisterFileTypes(); err != nil {
+			fmt.Fprintln(os.Stderr, "register failed:", err)
+			os.Exit(1)
+		}
+		fmt.Println("Registered G-code file types with GcodeSim. Double-click any .nc/.gcode/.ngc/.tap/etc to open.")
+		return
+	case *unregisterFlag:
+		if err := ui.UnregisterFileTypes(); err != nil {
+			fmt.Fprintln(os.Stderr, "unregister failed:", err)
+			os.Exit(1)
+		}
+		fmt.Println("Unregistered G-code file types from GcodeSim.")
+		return
+	}
+
 	var initialPath string
 	if flag.NArg() >= 1 {
 		initialPath = flag.Arg(0)
