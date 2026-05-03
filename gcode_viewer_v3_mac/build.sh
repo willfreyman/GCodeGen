@@ -24,9 +24,13 @@ echo "→ Building $BIN_NAME (CGO + universal-binary if possible)..."
 # Build a universal binary (arm64 + amd64) so the same .app runs on Apple
 # Silicon and Intel Macs. Requires both arch toolchains; falls back to a
 # single-arch build if `lipo` or one of the targets isn't available.
-# Inject current git tag so the running binary can compare itself against
-# the latest GitHub release on startup.
-GIT_VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+# Inject the most recent git tag so the running binary can compare itself
+# against the latest GitHub release on startup. --abbrev=0 returns the
+# nearest tag without the offset suffix, so a build one commit past
+# v3.0.1 still stamps as "v3.0.1" instead of "v3.0.1-1-gabc1234". The
+# offset form was tripping the update check into thinking the running
+# build was older than the release it was actually built from.
+GIT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "dev")
 LDFLAGS="-s -w -X gcodegen.local/viewer/internal/version.Version=${GIT_VERSION}"
 echo "  (version: ${GIT_VERSION})"
 

@@ -51,9 +51,16 @@ try {
 }
 
 # ── 3. Build ────────────────────────────────────────────────────────────
-# Inject the current git tag into internal/version.Version so the running
-# binary knows what to compare against the GitHub Releases API.
-$gitVersion = (git describe --tags --always 2>$null)
+# Inject the most recent git tag into internal/version.Version so the
+# running binary can compare itself against the GitHub Releases API.
+#
+# We use --abbrev=0 (latest tag, NOT the offset-from-tag form) so a build
+# from HEAD that's one commit past v3.0.1 still stamps as "v3.0.1" rather
+# than "v3.0.1-1-gabc1234". The cluttered offset-form was confusing the
+# update check — the local stamp didn't match the release tag, so the
+# binary thought there was an update available even when running the
+# very build it was checking against.
+$gitVersion = (git describe --tags --abbrev=0 2>$null)
 if (-not $gitVersion) { $gitVersion = "dev" }
 
 $ldflags = "-s -w -H windowsgui -X gcodegen.local/viewer/internal/version.Version=$gitVersion"
