@@ -282,12 +282,11 @@ type sceneState struct {
 	playback *scene.Playback
 
 	// Material-removal heightmap: rebuilt on file load and on Reset, eroded
-	// per-tick by CutSegment along the swept tool path. The actor returned
-	// by heightmap.Actor() is cached, so removing on rebuild uses the same
-	// reference we added.
-	heightmap   *scene.Heightmap
-	lastToolPos parser.Point
-	refreshCtr  int // throttles GPU mesh re-upload to ~15 Hz
+	// per-tick by applyCutsBetween along the playback's swept move path.
+	// The actor returned by heightmap.Actor() is cached, so removing on
+	// rebuild uses the same reference we added.
+	heightmap  *scene.Heightmap
+	refreshCtr int // throttles GPU mesh re-upload to ~15 Hz
 
 	focal   math32.Vector3
 	camDist float32
@@ -350,7 +349,6 @@ func (s *sceneState) loadFile(path string) error {
 	tool.SetSpindle(false)
 	s.contentRoot.Add(tool.Node)
 	s.tool = tool
-	s.lastToolPos = first
 
 	s.moves = moves
 	s.min = min
@@ -373,17 +371,22 @@ func (s *sceneState) tickPlayback(dt float64) {
 	}
 	wasRunning := s.playback.Running
 
+	// Capture playback's pre-tick state so we can cut along the ACTUAL
+	// swept path afterward. The bug we're avoiding: at high speed (or
+	// under render lag) one tick can advance through many moves —
+	// straight-line cutting from previous-frame-position to current-frame
+	// position then chord-cuts across arcs and slices through rapids,
+	// producing phantom material removal where the tool was actually
+	// lifted in the air. Walking the move list move-by-move respects the
+	// linearized arc points and skips G0 rapids correctly.
+	fromIdx := s.playback.MoveIndex
+	fromT := s.playback.MoveT
+
 	pos, spindle := s.playback.Tick(dt)
 
-	// Material removal: erode the heightmap along the segment from the
-	// previous frame's position to the current one. Skip rapids (G0) and
-	// any time the spindle was off — both match the v2 behavior.
-	if wasRunning && s.heightmap != nil && spindle && s.playback.MoveIndex < len(s.moves) {
-		if s.moves[s.playback.MoveIndex].Kind != "G0" {
-			s.heightmap.CutSegment(s.lastToolPos, pos, s.bitDiameter/2)
-		}
+	if wasRunning && s.heightmap != nil {
+		s.applyCutsBetween(fromIdx, fromT, s.playback.MoveIndex, s.playback.MoveT)
 	}
-	s.lastToolPos = pos
 
 	s.tool.SetPosition(pos.X, pos.Y, pos.Z)
 	s.tool.SetSpindle(spindle)
@@ -449,7 +452,6 @@ func (s *sceneState) resetPlayback() {
 	pos := s.playback.CurrentPosition()
 	s.tool.SetPosition(pos.X, pos.Y, pos.Z)
 	s.tool.SetSpindle(false)
-	s.lastToolPos = pos
 	s.refreshCtr = 0
 	s.toolbar.SetPlaying(false)
 	s.toolbar.SetProgress(0)
@@ -469,7 +471,6 @@ func (s *sceneState) scrubTo(fraction float64) {
 	s.playback.SetProgress(fraction)
 	pos := s.playback.CurrentPosition()
 	s.tool.SetPosition(pos.X, pos.Y, pos.Z)
-	s.lastToolPos = pos
 	if s.playback.MoveIndex < len(s.moves) {
 		s.tool.SetSpindle(s.moves[s.playback.MoveIndex].Spindle)
 	}
@@ -478,6 +479,63 @@ func (s *sceneState) scrubTo(fraction float64) {
 	// stores only current state (no per-tick undo history), so we reset
 	// it and replay every cut up to the new playback position.
 	s.replayCutsTo(s.playback.MoveIndex, s.playback.MoveT)
+}
+
+// applyCutsBetween cuts the heightmap along the actual swept tool path
+// from (fromIdx, fromT) to (toIdx, toT). Walks moves one at a time so
+// arc-linearized polylines are followed correctly and G0 rapids /
+// spindle-off moves are skipped in between. This is the per-tick cut
+// path during playback; replayCutsTo uses the same logic from index 0
+// for slider scrub.
+//
+// Assumes fromIdx <= toIdx (Tick only advances forward; the scrub path
+// goes through replayCutsTo which Reset()s first then calls this
+// starting from (0, 0)).
+func (s *sceneState) applyCutsBetween(fromIdx int, fromT float64, toIdx int, toT float64) {
+	if s.heightmap == nil {
+		return
+	}
+	if fromIdx < 0 {
+		fromIdx = 0
+	}
+	if fromIdx >= len(s.moves) {
+		return
+	}
+	if toIdx >= len(s.moves) {
+		toIdx = len(s.moves) - 1
+		toT = 1
+	}
+	radius := s.bitDiameter / 2
+
+	// Same-move case: partial cut from fromT to toT inside fromIdx.
+	if fromIdx == toIdx {
+		m := s.moves[fromIdx]
+		if m.Kind != "G0" && m.Spindle {
+			cutMoveSegment(s.heightmap, m, fromT, toT, radius)
+		}
+		return
+	}
+
+	// Multi-move case (high speed / lag): cut three regions —
+	//   1. tail of fromIdx (fromT → 1.0)
+	//   2. all fully-crossed intermediate moves (one at a time)
+	//   3. head of toIdx (0 → toT)
+	if m := s.moves[fromIdx]; m.Kind != "G0" && m.Spindle {
+		cutMoveSegment(s.heightmap, m, fromT, 1.0, radius)
+	}
+	for i := fromIdx + 1; i < toIdx; i++ {
+		m := s.moves[i]
+		if m.Kind == "G0" || !m.Spindle {
+			continue
+		}
+		cutMoveSegment(s.heightmap, m, 0, 1.0, radius)
+	}
+	if toT > 0 {
+		m := s.moves[toIdx]
+		if m.Kind != "G0" && m.Spindle {
+			cutMoveSegment(s.heightmap, m, 0, toT, radius)
+		}
+	}
 }
 
 // replayCutsTo rebuilds the heightmap from scratch by re-running every
@@ -495,74 +553,73 @@ func (s *sceneState) replayCutsTo(moveIndex int, moveT float64) {
 		return
 	}
 	s.heightmap.Reset()
-	radius := s.bitDiameter / 2
-
-	// Replay every fully-completed cutting move.
-	for i := 0; i < moveIndex && i < len(s.moves); i++ {
-		m := s.moves[i]
-		if m.Kind == "G0" || !m.Spindle {
-			continue
-		}
-		for j := 1; j < len(m.Points); j++ {
-			s.heightmap.CutSegment(m.Points[j-1], m.Points[j], radius)
-		}
-	}
-
-	// Partial cut for the move currently in progress: walk its Points
-	// list by arc-length up to moveT, cutting each whole segment that
-	// falls fully inside, and a partial segment for the final piece.
-	if moveIndex < len(s.moves) && moveT > 0 {
-		m := s.moves[moveIndex]
-		if m.Kind != "G0" && m.Spindle && len(m.Points) >= 2 {
-			cutPartialMove(s.heightmap, m, moveT, radius)
-		}
-	}
-
+	s.applyCutsBetween(0, 0, moveIndex, moveT)
 	s.heightmap.RefreshMesh()
 	s.refreshCtr = 0
 }
 
-// cutPartialMove cuts the heightmap along the move's Points polyline up to
-// the parameter `t` (arc-length fraction in [0, 1]). Mirrors the
-// interpolation logic in scene.Playback so the scrubbed surface matches
-// the same visual position the live tick would draw.
-func cutPartialMove(h *scene.Heightmap, m *parser.Move, t float64, radius float64) {
+// cutMoveSegment cuts the heightmap along move.Points from arc-length
+// parameter t1 to t2 (both in [0, 1], t1 ≤ t2). Walks each segment of
+// the polyline, partial-cutting the segments that contain the t1/t2
+// endpoints and full-cutting any whole segments in between. Mirrors the
+// arc-length parameterization used by scene.Playback.interpolateMove,
+// so the rendered surface matches the live tick's tool trajectory.
+func cutMoveSegment(h *scene.Heightmap, m *parser.Move, t1, t2 float64, radius float64) {
 	pts := m.Points
-	if len(pts) < 2 {
+	if len(pts) < 2 || t2 <= t1 {
 		return
 	}
 
 	total := 0.0
 	for i := 1; i < len(pts); i++ {
-		dx := pts[i].X - pts[i-1].X
-		dy := pts[i].Y - pts[i-1].Y
-		dz := pts[i].Z - pts[i-1].Z
-		total += math.Sqrt(dx*dx + dy*dy + dz*dz)
+		total += dist3D(pts[i-1], pts[i])
 	}
 	if total <= 0 {
 		return
 	}
-	target := t * total
+	target1 := t1 * total
+	target2 := t2 * total
 
 	walked := 0.0
 	for i := 1; i < len(pts); i++ {
-		dx := pts[i].X - pts[i-1].X
-		dy := pts[i].Y - pts[i-1].Y
-		dz := pts[i].Z - pts[i-1].Z
-		segLen := math.Sqrt(dx*dx + dy*dy + dz*dz)
+		segLen := dist3D(pts[i-1], pts[i])
+		segStart := walked
+		segEnd := walked + segLen
+		walked = segEnd
 
-		if walked+segLen >= target {
-			localT := (target - walked) / segLen
-			interp := parser.Point{
-				X: pts[i-1].X + dx*localT,
-				Y: pts[i-1].Y + dy*localT,
-				Z: pts[i-1].Z + dz*localT,
-			}
-			h.CutSegment(pts[i-1], interp, radius)
-			return
+		if segEnd <= target1 {
+			continue // segment entirely before the cut window
 		}
-		h.CutSegment(pts[i-1], pts[i], radius)
-		walked += segLen
+		if segStart >= target2 {
+			return // remaining segments are entirely after — done
+		}
+
+		s1 := 0.0
+		if target1 > segStart {
+			s1 = (target1 - segStart) / segLen
+		}
+		s2 := 1.0
+		if target2 < segEnd {
+			s2 = (target2 - segStart) / segLen
+		}
+		a := lerpPoint(pts[i-1], pts[i], s1)
+		b := lerpPoint(pts[i-1], pts[i], s2)
+		h.CutSegment(a, b, radius)
+	}
+}
+
+func dist3D(a, b parser.Point) float64 {
+	dx := b.X - a.X
+	dy := b.Y - a.Y
+	dz := b.Z - a.Z
+	return math.Sqrt(dx*dx + dy*dy + dz*dz)
+}
+
+func lerpPoint(a, b parser.Point, t float64) parser.Point {
+	return parser.Point{
+		X: a.X + (b.X-a.X)*t,
+		Y: a.Y + (b.Y-a.Y)*t,
+		Z: a.Z + (b.Z-a.Z)*t,
 	}
 }
 
