@@ -15,6 +15,19 @@ The earlier Python+VTK viewer (`gcode_viewer_v2/` → `GcodeSimV1.exe`) is kept
 as a reference implementation; the Go viewer (v3) is the active development
 target. v3 ships as a **single ~5 MB binary** vs ~200 MB for v2.
 
+## Documentation
+
+* **[`docs/MANUAL.md`](docs/MANUAL.md)** — full user manual: every
+  toolbar button, the material-removal heightmap, through-cut, view
+  cube, mouse + keyboard shortcuts, file formats, settings, and
+  troubleshooting.
+* **[`tutorials/`](tutorials/)** — six runnable `.nc` files for new
+  users, from a basic square outline to a multi-operation program
+  with pockets, drills, slots, and through-cuts. Each file has an
+  in-line comment header explaining what to look for.
+* **[`CLAUDE.md`](CLAUDE.md)** — architecture notes for developers
+  working on the source.
+
 ## Quick start
 
 ### Editor — sketch a program (Tkinter, stdlib-only)
