@@ -20,6 +20,22 @@ func promptUpdateAvailable(current, latest string) bool {
 	).Title("GcodeSim — Update Available").YesNo()
 }
 
+// promptHideForVersion is the follow-up dialog that fires only after the
+// user declines the main update prompt. Lets them say "I don't want to
+// be re-asked about this specific release" without permanently silencing
+// future updates. Returns true if user wants to skip this version.
+//
+// Native dialog libraries that ship with Go bindings (sqweek/dialog)
+// don't expose 3-button modals, so this is the cleanest portable way to
+// add the third option without writing per-platform cgo for NSAlert /
+// MessageBoxIndirect.
+func promptHideForVersion(latest string) bool {
+	return dialog.Message(
+		"Hide the %s update notice until a newer version is released?\n\n(You can still see the title bar hint either way.)",
+		displayVersion(latest),
+	).Title("GcodeSim — Hide This Update?").YesNo()
+}
+
 // openReleasesPage opens the user's default browser to the specific
 // release tag's page on GitHub. Cross-platform: uses `start` on Windows,
 // `open` on macOS, `xdg-open` on Linux.

@@ -69,6 +69,11 @@ func Run(initialPath string) {
 	}
 	win := window.Get().(*window.GlfwWindow)
 
+	// User settings (skipped update versions, etc.) — loaded once at
+	// startup. Persists to ~/Library/Application Support/GcodeSim/
+	// settings.json on Mac (and the equivalent on Windows/Linux).
+	settings := LoadSettings()
+
 	// Async update check: fetch the latest release tag from GitHub off the
 	// main thread (5-sec timeout, silent fail). When (and IF) it returns,
 	// the main loop reads the channel and updates the window title once.
@@ -218,17 +223,24 @@ func Run(initialPath string) {
 			scale = 1
 		}
 
-		// Pick up the update-check result if it arrived this frame and
-		// stamp the title bar. Non-blocking — most frames will hit the
-		// default branch and skip. Then prompt the user (modal yes/no)
-		// to open the release page in their browser. Yes → browser
-		// launches at the release tag's URL. No → just the title-bar
-		// hint stays.
+		// Pick up the update-check result if it arrived this frame.
+		// Non-blocking — most frames will hit the default branch.
+		// Behavior:
+		//   * Always update the title bar with the available-version hint.
+		//   * If the user previously dismissed THIS exact version via
+		//     "hide" — skip both prompts (title hint still shows).
+		//   * Otherwise show the open-page prompt.
+		//   * If they decline, ask once whether to hide this specific
+		//     version going forward; persist the choice.
 		select {
 		case latest := <-updateCheckCh:
 			win.SetTitle(windowTitle(version.Version, latest))
-			if promptUpdateAvailable(version.Version, latest) {
-				openReleasesPage(latest)
+			if !settings.IsVersionSkipped(latest) {
+				if promptUpdateAvailable(version.Version, latest) {
+					openReleasesPage(latest)
+				} else if promptHideForVersion(latest) {
+					settings.SkipVersion(latest)
+				}
 			}
 		default:
 		}
