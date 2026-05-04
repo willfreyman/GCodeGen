@@ -98,7 +98,7 @@ func NewToolbar(width float32, initialBitDia float64, callbacks ToolbarCallbacks
 	x := float32(toolbarPadding)
 
 	// --- Row 1: Open
-	openBtn := gui.NewButton("Open .nc...")
+	openBtn := gui.NewButton("Open file")
 	openBtn.SetSize(buttonOpenW, buttonHeight)
 	openBtn.SetPosition(x, yRow1)
 	openBtn.Subscribe(gui.OnClick, func(string, interface{}) {
