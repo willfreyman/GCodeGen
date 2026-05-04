@@ -68,6 +68,7 @@ func Run(initialPath string) {
 		panic(fmt.Errorf("window init: %w", err))
 	}
 	win := window.Get().(*window.GlfwWindow)
+	setWindowIcon(win)
 
 	// User settings (skipped update versions, etc.) — loaded once at
 	// startup. Persists to %AppData%\GcodeSim\settings.json on Windows
