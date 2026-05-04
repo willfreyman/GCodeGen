@@ -43,6 +43,11 @@ gcode_viewer_v3/GcodeSimV3.app/
 gcode_viewer_v3/GcodeSimV3.app.zip
 gcode_viewer_v3/mac/icon.icns
 
+# Old v3_mac/ tree was collapsed into v3/ but a stray "git add" on Mac
+# accidentally re-committed build artifacts there. Guard against that
+# happening again — anything at this path is now ignored.
+gcode_viewer_v3_mac/
+
 # Compiled binaries anywhere — but keep the small bundled editor exe.
 *.exe
 !exe/gcodegenV1.0.exe
