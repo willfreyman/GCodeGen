@@ -70,6 +70,8 @@ gcode_viewer_v3/
         ├── toolbar.go          two-row toolbar + Options/Tutorials dropdowns
         ├── tutorials.go        //go:embed tutorials/*.nc
         ├── tutorials/*.nc      6 starter programs baked into the binary
+        ├── window_icon.go      //go:embed icon.png + GLFW SetIcon
+        ├── icon.png            title-bar icon source (single-source-of-truth)
         ├── settings.go         persisted skipped-update-versions
         ├── update_prompt.go    GitHub-API check + native Yes/No dialogs
         ├── openfile_*.go       darwin: Apple Event handler for double-click

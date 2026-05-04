@@ -139,6 +139,8 @@ gcode_viewer_v3/
 │   │   ├── toolbar.go          two-row toolbar + Options + Tutorials dropdown panels
 │   │   ├── tutorials.go        //go:embed tutorials/*.nc  → bundled tutorial dropdown
 │   │   ├── tutorials/*.nc      6 runnable .nc files baked into the binary
+│   │   ├── window_icon.go      //go:embed icon.png + GLFW SetIcon for title bar
+│   │   ├── icon.png            single-source-of-truth title-bar icon (NOT in windows/ or mac/ — those would drift out of sync)
 │   │   ├── settings.go         persisted skipped-update-versions (UserConfigDir)
 │   │   ├── update_prompt.go    GitHub-Releases-API update check + native Yes/No dialogs
 │   │   ├── openfile_*.go       darwin: Apple Event handler for double-clicked .nc; other: stub
