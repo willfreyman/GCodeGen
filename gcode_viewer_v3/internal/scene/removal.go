@@ -6,6 +6,13 @@
 // current height). The result reads as a 3D carved surface and is enough
 // for any 3-axis program without undercuts (the typical CNC-router
 // workload).
+//
+// Known limitation: cell discretization makes circular bit features
+// (corner fillets, external roundings) look jagged. A polygon-union
+// renderer is designed but unimplemented — see
+// docs/POLYGON_RENDERER.md for the full plan. The heightmap stays in
+// place regardless because it handles Z-varying moves (plunge ramps,
+// 3D surfacing) that the swept-stadium model can't represent.
 
 package scene
 

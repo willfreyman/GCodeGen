@@ -171,8 +171,20 @@ gcode_viewer_v3/
 
 - **`material.Basic` IGNORES textures.** Its fragment shader is literally `FragColor = vec4(Color, 1.0)`. Any `mat.AddTexture` call on Basic is silently dropped. Use `material.Standard` for textured meshes (with vertex normals so lighting works).
 
+### Deferred work — polygon-union renderer
+
+**Don't re-derive this from scratch when a user complains about jagged corners.** A full design exists at [`docs/POLYGON_RENDERER.md`](docs/POLYGON_RENDERER.md) for replacing the heightmap's display geometry with mathematically exact swept-stadium polygons (real bit-radius fillets at internal corners, real roundings at external corners). The user has seen the design and chose to defer implementation, possibly after testing simpler fixes (cell-size shrink + finer toolpath sampling) first.
+
+If a user complains about cut-edge quality:
+1. Read `docs/POLYGON_RENDERER.md` — full root-cause analysis is in §1, alternatives ranked in §11.
+2. The two simpler fixes that might be tried before the polygon renderer: tighten `HeightmapCellSize` to `bit_diameter/16` (floored at 0.25 mm, with a hard cell-count cap), and tighten `CutSegment`'s `step` from `bitRadius/2` to `bitRadius/4`. Both are local edits in `internal/scene/removal.go`.
+3. If those don't satisfy, follow the M1–M7 milestones in the design doc.
+
+The heightmap stays in the codebase regardless — it handles Z-varying moves (plunge ramps, 3D surfacing) that the swept-stadium model can't represent.
+
 ### Cross-cutting things that have already been investigated
 
+- **Jagged cut corners + non-rounded external corners** are caused by heightmap cell discretization (bit_diameter/8 floored at 0.4 mm gives only ~4 cells per bit radius for a 6 mm bit). Combined with flat shading, the bit's circular footprint reads as a chunky octagon. Real fix is the polygon-union renderer in `docs/POLYGON_RENDERER.md`.
 - **3.8 fps → 62 fps fix**: was the heightmap normals filter + 1-mm-everywhere cell size on big stocks. The two perf fixes above (cell scaling + flat shading) brought the same workload to 62 fps in `bench_13`.
 - **The debug window is NOT the cause** of FPS drops; bench_11 confirmed it adds <1 fps overhead.
 - **Layered rendering is NOT slow** on this stack — the alpha-bit-planes + multisamples=0 combo is actually faster than single-layer (bench_09 vs bench_08).

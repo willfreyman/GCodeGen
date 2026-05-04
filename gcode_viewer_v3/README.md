@@ -82,6 +82,18 @@ land at the project root (`gcode_viewer_v3/`), not inside the platform
 folders, so the `gh release upload` recipe in the top-level README is
 unaffected.
 
+## Roadmap — designed but not implemented
+
+- **Polygon-union material removal renderer.** Replaces the
+  heightmap's discretized cut display with mathematically exact
+  swept-stadium polygons — real bit-radius fillets at internal
+  corners, real roundings at external corners. Heightmap stays for
+  Z-varying moves (ramps, 3D surfacing). Full design at
+  [`docs/POLYGON_RENDERER.md`](../docs/POLYGON_RENDERER.md). 7
+  end-to-end-testable milestones, ~1000 LOC. Don't re-derive — that
+  doc covers root-cause analysis, alternatives, algorithm details,
+  testing, performance, and open questions.
+
 ## Known parity quirks (preserved from Python)
 
 - `G0`/`G1`/`G2`/`G3` mode detection uses substring match with an `elif`
