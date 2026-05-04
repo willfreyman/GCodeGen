@@ -2,18 +2,29 @@
 #
 # What this does:
 #   1. Ensure goversioninfo is installed (one-time auto-install via go install).
-#   2. Generate resource_windows_*.syso from cmd/gcodesim/versioninfo.json.
-#      Go's linker picks up any .syso in a package dir on Windows builds, so
-#      the next `go build` embeds the icon + version info into the exe.
+#   2. Generate resource_windows_*.syso into ../cmd/gcodesim/ from the
+#      versioninfo.json + icon.ico that live alongside this script.
+#      Go's linker picks up any .syso in the package dir on Windows builds,
+#      so the next `go build` embeds the icon + version info into the exe.
 #   3. Build gcodesim.exe with stripped symbols and the GUI subsystem flag
 #      (no console window when launched from Explorer).
 #
-# Run from gcode_viewer_v3/:
-#   .\build.ps1
+# Run from gcode_viewer_v3/windows/:
+#   .\build.ps1                  (or .\build.bat to bypass execution policy)
 #
-# Output: gcodesim.exe (with icon, version info, no console) in this folder.
+# Output: gcodesim.exe (with icon, version info, no console) at the parent
+# gcode_viewer_v3/ folder — same place older builds put it, so the
+# `gh release upload` recipe in the README still works unchanged.
 
 $ErrorActionPreference = 'Stop'
+
+# Anchor every relative path to the project root (gcode_viewer_v3/), one
+# level above this script. Avoids "what was the cwd when they ran me?"
+# fragility — `go build`, `go mod tidy`, and `git describe` all want to
+# run from the module root.
+$WinDir   = $PSScriptRoot
+$ProjRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
+Set-Location $ProjRoot
 
 # ── 1. Make sure goversioninfo is on PATH (install on first run) ─────────
 function Get-GoBin {
@@ -49,9 +60,14 @@ go mod tidy
 # ── 2. Generate resource_windows_*.syso for the icon + version metadata ─
 # Use -platform-specific so the .syso files are named resource_windows_amd64.syso
 # (Windows-only); cross-builds for other OSes won't try to link them.
+#
+# We Push-Location into cmd/gcodesim/ because Go's linker only finds .syso
+# files that sit in the package directory. The icon + JSON inputs are
+# passed as absolute paths so we can read them from windows/ regardless
+# of cwd.
 Push-Location .\cmd\gcodesim
 try {
-    goversioninfo -platform-specific=true
+    goversioninfo -platform-specific=true -icon "$WinDir\icon.ico" "$WinDir\versioninfo.json"
 } finally {
     Pop-Location
 }

@@ -4,10 +4,12 @@ Go port of `gcode_viewer_v2/` (Python + VTK + PyQt5) using the
 [g3n](https://github.com/g3n/engine) engine. Single ~5 MB binary vs
 ~180-220 MB for the PyInstaller build of v2.
 
-**Single source tree** for both Windows and macOS — the build-tagged
-`*_darwin.go` / `*_windows.go` files split platform-specific logic.
-`build.ps1` / `build.bat` builds for Windows; `build.sh` builds the
-universal-binary `.app` for macOS.
+**Shared Go source, two platform folders.** All Go source lives in
+`cmd/` + `internal/` and compiles on both Windows and macOS (build-tagged
+`*_darwin.go` / `*_windows.go` files split the OS-specific bits). Build
+scripts + per-platform resources live in dedicated `windows/` and `mac/`
+folders. Each platform's folder is self-contained — edit the .go files
+once and both platforms pick up the change.
 
 ## Build
 
@@ -16,17 +18,20 @@ Windows; Xcode CLI tools on macOS).
 
 ```
 # Windows
-.\build.bat              # → gcodesim.exe (with icon, version info)
+cd windows
+.\build.bat              # → ../gcodesim.exe (with icon, version info)
 
 # macOS
-./build.sh               # → GcodeSimV3.app + GcodeSimV3.app.zip
-open ./GcodeSimV3.app
+cd mac
+./build.sh               # → ../GcodeSimV3.app + ../GcodeSimV3.app.zip
+open ../GcodeSimV3.app
 ```
 
-For dev iteration without the full build pipeline:
+For dev iteration without the full build pipeline (no icon, no version
+stamp, no .syso resources):
 
 ```
-go run ./cmd/gcodesim                 # quick run (no icon, no version stamp)
+go run ./cmd/gcodesim                 # quick run from the project root
 go run ./cmd/gcodesim path/to/file.nc # load a file at startup
 ```
 
@@ -45,14 +50,18 @@ reference parser. Any failure means the Go parser has drifted from
 ```
 gcode_viewer_v3/
 ├── go.mod / go.sum             module gcodegen.local/viewer
-├── build.ps1 / build.bat       Windows build
-├── build.sh                    macOS build (universal arm64+amd64 .app)
-├── Info.plist                  macOS bundle metadata + .nc file association
-├── icon.ico                    Windows icon; converted to .icns by build.sh
+├── windows/                    Windows-only build assets
+│   ├── build.ps1               PowerShell build script
+│   ├── build.bat               exec-policy wrapper around build.ps1
+│   ├── versioninfo.json        goversioninfo input → resource_windows_*.syso
+│   └── icon.ico                embedded into the .exe by goversioninfo
+├── mac/                        macOS-only build assets
+│   ├── build.sh                bash build script (universal arm64+amd64)
+│   ├── Info.plist              bundle metadata + .nc file association
+│   └── icon.ico                converted to .icns by build.sh, copied into .app
 ├── cmd/gcodesim/
-│   ├── main.go                 entry — calls ui.Run()
-│   └── versioninfo.json        goversioninfo input → resource_windows_*.syso
-└── internal/
+│   └── main.go                 entry — calls ui.Run()
+└── internal/                   shared Go source, all platforms
     ├── parser/                 G-code parser (1:1 port of v2's parser.py)
     ├── scene/                  actors: path, stock, tool, view cube, heightmap
     └── ui/
@@ -67,6 +76,11 @@ gcode_viewer_v3/
         ├── register_*.go       windows: HKCU file association
         └── dialogs.go          sqweek/dialog file open + error message
 ```
+
+Build outputs (`gcodesim.exe`, `GcodeSimV3.app`, `GcodeSimV3.app.zip`)
+land at the project root (`gcode_viewer_v3/`), not inside the platform
+folders, so the `gh release upload` recipe in the top-level README is
+unaffected.
 
 ## Known parity quirks (preserved from Python)
 

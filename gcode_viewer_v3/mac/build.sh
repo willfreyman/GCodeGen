@@ -9,10 +9,21 @@
 #   * Go 1.22+   (brew install go)
 #   * Xcode CLI tools  (xcode-select --install) — provides clang for CGo
 #
-# Output: GcodeSimV3.app in the current directory.
+# Run from gcode_viewer_v3/mac/:
+#   ./build.sh
+#
+# Output: GcodeSimV3.app + GcodeSimV3.app.zip at the parent
+# gcode_viewer_v3/ folder — same place older builds put it, so the
+# `gh release upload` recipe in the README still works unchanged.
 
 set -euo pipefail
-cd "$(dirname "$0")"
+
+# Anchor the script to its own folder for input lookups (Info.plist,
+# icon.ico) and to the parent project root (gcode_viewer_v3/) for the
+# Go toolchain — `go build`, `go mod tidy`, and `git describe` all want
+# to run from the module root.
+MAC_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$MAC_DIR/.."
 
 APP_NAME="GcodeSimV3"
 BIN_NAME="gcodesim"
@@ -65,17 +76,20 @@ fi
 # built-in `sips` and `iconutil` so no extra deps are needed. If something
 # goes wrong (e.g. the .ico has only small sizes) the .app still builds
 # without an icon.
-if [ ! -f icon.icns ] && [ -f icon.ico ]; then
+#
+# The .ico source lives in mac/ (alongside this script); the generated
+# .icns lands there too so it's gitignored next to its source.
+if [ ! -f "$MAC_DIR/icon.icns" ] && [ -f "$MAC_DIR/icon.ico" ]; then
     echo "→ Converting icon.ico → icon.icns..."
     TMP_DIR=$(mktemp -d)
-    if sips -s format png icon.ico --out "$TMP_DIR/icon.png" >/dev/null 2>&1; then
+    if sips -s format png "$MAC_DIR/icon.ico" --out "$TMP_DIR/icon.png" >/dev/null 2>&1; then
         ICONSET="$TMP_DIR/icon.iconset"
         mkdir -p "$ICONSET"
         for SIZE in 16 32 128 256 512; do
             sips -z $SIZE $SIZE "$TMP_DIR/icon.png" --out "$ICONSET/icon_${SIZE}x${SIZE}.png" >/dev/null
             sips -z $((SIZE*2)) $((SIZE*2)) "$TMP_DIR/icon.png" --out "$ICONSET/icon_${SIZE}x${SIZE}@2x.png" >/dev/null
         done
-        iconutil -c icns -o icon.icns "$ICONSET"
+        iconutil -c icns -o "$MAC_DIR/icon.icns" "$ICONSET"
         echo "  · icon.icns created"
     else
         echo "  · sips couldn't read icon.ico — skipping (.app will use generic icon)"
@@ -90,8 +104,8 @@ mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
 cp "$BIN_NAME" "$APP_DIR/Contents/MacOS/$BIN_NAME"
-cp Info.plist "$APP_DIR/Contents/Info.plist"
-[ -f icon.icns ] && cp icon.icns "$APP_DIR/Contents/Resources/"
+cp "$MAC_DIR/Info.plist" "$APP_DIR/Contents/Info.plist"
+[ -f "$MAC_DIR/icon.icns" ] && cp "$MAC_DIR/icon.icns" "$APP_DIR/Contents/Resources/"
 
 # Mark the binary executable explicitly (sometimes lost on FAT/SMB shares).
 chmod +x "$APP_DIR/Contents/MacOS/$BIN_NAME"
@@ -125,7 +139,7 @@ if [ -x "$LSREGISTER" ]; then
 fi
 
 echo
-echo "  Run:    open ./$APP_DIR"
+echo "  Run:    open ../$APP_DIR        (from this mac/ folder)"
 echo "  Or:     double-click in Finder."
 echo
 echo "First launch may show 'unidentified developer' (we're unsigned)."

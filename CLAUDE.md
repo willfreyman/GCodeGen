@@ -14,7 +14,7 @@ should land unless asked.
 - `gcodegen.py` — **Editor.** Tkinter sketchpad: draw freehand toolpaths, set per-stroke depths + machine settings, export `.nc`. Stdlib-only. Has its own in-app simulator and finished-product preview windows.
 - `gcode_preview.py` — **Legacy Tk viewer.** Earlier Tkinter-based G-code viewer with a hand-rolled 3D projection on a 2D Canvas. Performance-fixed in Stage 1 of the v2 refactor (see Stage-1 notes below). Kept around for users who can't run VTK.
 - `gcode_viewer_v2/` — **Reference viewer (Python).** VTK + PyQt5 with real 3D, material-removal heightmap simulation, splash, debug window, view cube, etc. Ships as `GcodeSimV1.exe` via PyInstaller (~200 MB). The Go port (v3) is a port of this — when something is missing in v3, look at v2 for the spec.
-- `gcode_viewer_v3/` — **Active viewer (Go).** Pure-Go rewrite using the [g3n](https://github.com/g3n/engine) engine. Same features as v2 (toolpath, stock, end-mill, view cube, material-removal heightmap with through-cut, playback controls, options dropdown, embedded tutorials), but ships as a single ~5 MB `.exe` (vs ~200 MB for v2). **Single source tree — both `build.ps1` (Windows) and `build.sh` (Mac, with `Info.plist`) live alongside the Go code.**
+- `gcode_viewer_v3/` — **Active viewer (Go).** Pure-Go rewrite using the [g3n](https://github.com/g3n/engine) engine. Same features as v2 (toolpath, stock, end-mill, view cube, material-removal heightmap with through-cut, playback controls, options dropdown, embedded tutorials), but ships as a single ~5 MB `.exe` (vs ~200 MB for v2). **Shared Go source under `cmd/` + `internal/`; platform-specific build scripts and resources live in dedicated `windows/` and `mac/` subfolders.**
 
 There is no shared library between root-level scripts and v2; the v2 viewer's `parser.py` is a clean port of the root scripts' parsing logic with no UI deps. v3's parser is a 1:1 port of v2's.
 
@@ -24,8 +24,9 @@ There is no shared library between root-level scripts and v2; the v2 viewer's `p
 python gcodegen.py                                              # editor (Tk, stdlib-only)
 python gcode_preview.py                                         # legacy Tk viewer
 python -m gcode_viewer_v2.app                                   # v2 VTK viewer (run from project root)
-cd gcode_viewer_v3 && go run ./cmd/gcodesim                     # v3 Go viewer (Windows/Linux dev)
-cd gcode_viewer_v3 && ./build.sh && open ./GcodeSimV3.app       # v3 Go viewer (macOS, after build)
+cd gcode_viewer_v3 && go run ./cmd/gcodesim                     # v3 Go viewer (Windows/Linux dev — quick iteration)
+cd gcode_viewer_v3/windows && .\build.bat                       # v3 Go viewer (Windows release build → ../gcodesim.exe)
+cd gcode_viewer_v3/mac && ./build.sh && open ../GcodeSimV3.app  # v3 Go viewer (macOS release build → ../GcodeSimV3.app)
 ```
 
 The editor auto-opens the Finished Product Preview window 120ms after launch (`window.after(120, open_preview)` in `gcodegen.py`). That window is intentionally non-closable (`WM_DELETE_WINDOW` is bound to a no-op) — it deiconifies/lifts on subsequent calls instead of being recreated.
@@ -108,13 +109,17 @@ gcode_viewer_v2/
 ```
 gcode_viewer_v3/
 ├── go.mod / go.sum             module gcodegen.local/viewer (local — not published)
-├── build.ps1 / build.bat       one-shot Windows build (go build -ldflags='-s -w -H windowsgui')
-├── build.sh                    one-shot macOS build → universal .app bundle (arm64+amd64)
-├── Info.plist                  macOS bundle metadata + .nc/.gcode/.tap file association
-├── icon.ico                    Windows icon (used by goversioninfo); converted to .icns by build.sh
+├── windows/                    Windows-only build assets
+│   ├── build.ps1               one-shot Windows build (go build -ldflags='-s -w -H windowsgui')
+│   ├── build.bat               PowerShell exec-policy wrapper around build.ps1
+│   ├── versioninfo.json        goversioninfo input → resource_windows_*.syso
+│   └── icon.ico                embedded into the .exe by goversioninfo
+├── mac/                        macOS-only build assets
+│   ├── build.sh                one-shot macOS build → universal .app bundle (arm64+amd64)
+│   ├── Info.plist              macOS bundle metadata + .nc/.gcode/.tap file association
+│   └── icon.ico                converted to .icns by build.sh, copied into .app
 ├── cmd/
 │   ├── gcodesim/main.go        production entry — calls ui.Run()
-│   ├── gcodesim/versioninfo.json   goversioninfo input → resource_windows_*.syso
 │   └── g3n_smoke/main.go       single-file API skeleton (build-tag `smoke`, excluded by default)
 ├── internal/
 │   ├── parser/                 1:1 port of v2's parser.py + golden tests vs sample.nc
@@ -142,7 +147,7 @@ gcode_viewer_v3/
 └── (gcodesim.exe / GcodeSimV3.app  — gitignored build artifacts)
 ```
 
-**Single source tree, two builds.** Source is fully cross-platform; the build-tagged `*_darwin.go` / `*_windows.go` files split platform-specific logic. The Windows-only `Info.plist` is harmless on Windows builds (Go ignores it); the macOS-only `versioninfo.json` is harmless on Mac builds.
+**Shared Go source, dedicated platform folders.** All Go source lives in `cmd/` + `internal/` and compiles on both platforms — build-tagged `*_darwin.go` / `*_windows.go` files split platform-specific logic. Build scripts and platform resources are isolated in `windows/` and `mac/`, so each platform's folder is self-contained. The build scripts `cd ..` to the project root before invoking `go build`/`go mod tidy`/`git describe`, and reference their inputs (icon, JSON, plist) via the script's own folder. Outputs (`gcodesim.exe`, `GcodeSimV3.app`, `GcodeSimV3.app.zip`) land in the parent `gcode_viewer_v3/` folder so the `gh release upload` recipe in the README still works.
 
 **Embedded tutorials.** `internal/ui/tutorials.go` uses `//go:embed tutorials/*.nc` to bundle 6 starter programs into the binary. The toolbar has a "Tutorials ▾" dropdown that lists them; clicking one parses the embedded bytes through `loadBytes` (same code path as `loadFile`, just no disk I/O). The directory must live INSIDE the package using the embed directive — that's why `tutorials/` lives at `internal/ui/tutorials/` rather than the repo root.
 

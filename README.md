@@ -45,9 +45,9 @@ hit **Generate G-code** to export.
 ### Viewer (v3, Go) — Windows
 
 ```cmd
-cd gcode_viewer_v3
-.\build.ps1                 :: produces gcodesim.exe (~5 MB)
-.\gcodesim.exe              :: opens the viewer, then File → Open .nc
+cd gcode_viewer_v3\windows
+.\build.bat                 :: produces ..\gcodesim.exe (~5 MB)
+..\gcodesim.exe             :: opens the viewer, then Open file
 ```
 
 Requires **Go 1.22+** and a C compiler (TDM-GCC or MSYS2 mingw-w64) for CGo.
@@ -55,19 +55,24 @@ Requires **Go 1.22+** and a C compiler (TDM-GCC or MSYS2 mingw-w64) for CGo.
 ### Viewer (v3, Go) — macOS
 
 ```sh
-cd gcode_viewer_v3
-./build.sh                  # produces GcodeSimV3.app (universal arm64+amd64)
-open ./GcodeSimV3.app
+cd gcode_viewer_v3/mac
+./build.sh                  # produces ../GcodeSimV3.app (universal arm64+amd64)
+open ../GcodeSimV3.app
 ```
 
 Requires **Go 1.22+** and Xcode CLI tools (`xcode-select --install`).
 First launch may show "unidentified developer" — right-click → Open once
 to bypass Gatekeeper.
 
-> **Single source tree.** Both the Windows (`build.ps1` / `build.bat`)
-> and macOS (`build.sh`) build scripts live in `gcode_viewer_v3/`. The
-> Go source is fully cross-platform; build-tagged `*_darwin.go` /
-> `*_windows.go` files split platform-specific logic.
+> **Single source tree, two platform folders.** All Go source lives in
+> `gcode_viewer_v3/cmd/` and `gcode_viewer_v3/internal/` and compiles
+> on both platforms (build-tagged `*_darwin.go` / `*_windows.go` files
+> split the OS-specific bits). The platform-specific build scripts and
+> resources live in `gcode_viewer_v3/windows/` (`build.ps1`,
+> `build.bat`, `versioninfo.json`, `icon.ico`) and
+> `gcode_viewer_v3/mac/` (`build.sh`, `Info.plist`, `icon.ico`).
+> Build outputs (`gcodesim.exe`, `GcodeSimV3.app`) land in the parent
+> `gcode_viewer_v3/` folder.
 
 ### Controls (both platforms)
 
@@ -114,10 +119,10 @@ TAG=v3.0.1
 # Create the release (do this once per version)
 gh release create $TAG --title "GcodeSimV3 $TAG" --notes "What changed: ..."
 
-# Upload Windows binary (run after .\build.bat on Windows)
+# Upload Windows binary (run after gcode_viewer_v3\windows\build.bat)
 gh release upload $TAG gcode_viewer_v3/gcodesim.exe --clobber
 
-# Upload macOS bundle (run after ./build.sh on Mac)
+# Upload macOS bundle (run after gcode_viewer_v3/mac/build.sh)
 gh release upload $TAG gcode_viewer_v3/GcodeSimV3.app.zip --clobber
 ```
 
@@ -136,13 +141,12 @@ GCodeGen/
 ├── gcodegen.py              ← Tkinter sketch-to-G-code editor
 ├── gcode_preview.py         ← legacy Tkinter viewer
 │
-├── gcode_viewer_v3/         ← active viewer (Go + g3n) — single cross-platform tree
+├── gcode_viewer_v3/         ← active viewer (Go + g3n) — shared cross-platform tree
 │   ├── go.mod
-│   ├── build.ps1 / .bat     ← one-shot Windows build
-│   ├── build.sh             ← one-shot macOS build (universal arm64+amd64 .app)
-│   ├── Info.plist           ← macOS bundle metadata + .nc file association
-│   ├── cmd/gcodesim/        ← entry point
-│   └── internal/
+│   ├── windows/             ← Windows-only: build.ps1, build.bat, versioninfo.json, icon.ico
+│   ├── mac/                 ← macOS-only: build.sh, Info.plist, icon.ico
+│   ├── cmd/gcodesim/        ← entry point (shared)
+│   └── internal/            ← shared Go source (build-tagged *_darwin.go / *_windows.go)
 │       ├── parser/          ← G-code parser (1:1 port of v2's parser.py)
 │       ├── scene/           ← actors: path, stock, tool, view cube, heightmap
 │       └── ui/              ← window, toolbar, orbiter, dialogs
