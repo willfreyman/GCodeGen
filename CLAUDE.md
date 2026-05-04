@@ -4,17 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout
 
-Five apps live here, in two generations. **`gcode_viewer_v3/`** (Go + g3n)
-is the **active development target**; v2 (Python + VTK) is the previous
-reference implementation; the two Tkinter scripts at root are kept working
-but are not where new features should land unless asked.
+Four apps live here, in two generations. **`gcode_viewer_v3/`** (Go + g3n)
+is the **active development target** and is now a single cross-platform
+source tree with both Windows and macOS build scripts in the same folder.
+v2 (Python + VTK) is the previous reference implementation; the two
+Tkinter scripts at root are kept working but are not where new features
+should land unless asked.
 
 - `gcodegen.py` — **Editor.** Tkinter sketchpad: draw freehand toolpaths, set per-stroke depths + machine settings, export `.nc`. Stdlib-only. Has its own in-app simulator and finished-product preview windows.
 - `gcode_preview.py` — **Legacy Tk viewer.** Earlier Tkinter-based G-code viewer with a hand-rolled 3D projection on a 2D Canvas. Performance-fixed in Stage 1 of the v2 refactor (see Stage-1 notes below). Kept around for users who can't run VTK.
 - `gcode_viewer_v2/` — **Reference viewer (Python).** VTK + PyQt5 with real 3D, material-removal heightmap simulation, splash, debug window, view cube, etc. Ships as `GcodeSimV1.exe` via PyInstaller (~200 MB). The Go port (v3) is a port of this — when something is missing in v3, look at v2 for the spec.
-- `gcode_viewer_v3/` — **Active viewer (Go).** Pure-Go rewrite using the [g3n](https://github.com/g3n/engine) engine. Same features as v2 (toolpath, stock, end-mill, view cube, material-removal heightmap with through-cut, playback controls, options dropdown), but ships as a single ~5 MB `.exe` (vs ~200 MB for v2). **This is where new viewer work should land.**
-- `gcode_viewer_v3_mac/` — **macOS build harness.** Mirrors the v3 source plus a `build.sh` that produces a universal-binary `GcodeSimV3.app`. Source is currently a manual copy of v3; longer-term we'll collapse to a single source tree with two build scripts.
-- `exe/gcodegenV1.0.exe` — bundled editor binary.
+- `gcode_viewer_v3/` — **Active viewer (Go).** Pure-Go rewrite using the [g3n](https://github.com/g3n/engine) engine. Same features as v2 (toolpath, stock, end-mill, view cube, material-removal heightmap with through-cut, playback controls, options dropdown, embedded tutorials), but ships as a single ~5 MB `.exe` (vs ~200 MB for v2). **Single source tree — both `build.ps1` (Windows) and `build.sh` (Mac, with `Info.plist`) live alongside the Go code.**
 
 There is no shared library between root-level scripts and v2; the v2 viewer's `parser.py` is a clean port of the root scripts' parsing logic with no UI deps. v3's parser is a 1:1 port of v2's.
 
@@ -24,8 +24,8 @@ There is no shared library between root-level scripts and v2; the v2 viewer's `p
 python gcodegen.py                                              # editor (Tk, stdlib-only)
 python gcode_preview.py                                         # legacy Tk viewer
 python -m gcode_viewer_v2.app                                   # v2 VTK viewer (run from project root)
-cd gcode_viewer_v3   && go run ./cmd/gcodesim                   # v3 Go viewer (Windows/Linux dev)
-cd gcode_viewer_v3_mac && ./build.sh && open ./GcodeSimV3.app   # v3 Go viewer (macOS, after build)
+cd gcode_viewer_v3 && go run ./cmd/gcodesim                     # v3 Go viewer (Windows/Linux dev)
+cd gcode_viewer_v3 && ./build.sh && open ./GcodeSimV3.app       # v3 Go viewer (macOS, after build)
 ```
 
 The editor auto-opens the Finished Product Preview window 120ms after launch (`window.after(120, open_preview)` in `gcodegen.py`). That window is intentionally non-closable (`WM_DELETE_WINDOW` is bound to a no-op) — it deiconifies/lifts on subsequent calls instead of being recreated.
@@ -108,9 +108,13 @@ gcode_viewer_v2/
 ```
 gcode_viewer_v3/
 ├── go.mod / go.sum             module gcodegen.local/viewer (local — not published)
-├── build.ps1                   one-shot Windows build (go build -ldflags='-s -w -H windowsgui')
+├── build.ps1 / build.bat       one-shot Windows build (go build -ldflags='-s -w -H windowsgui')
+├── build.sh                    one-shot macOS build → universal .app bundle (arm64+amd64)
+├── Info.plist                  macOS bundle metadata + .nc/.gcode/.tap file association
+├── icon.ico                    Windows icon (used by goversioninfo); converted to .icns by build.sh
 ├── cmd/
 │   ├── gcodesim/main.go        production entry — calls ui.Run()
+│   ├── gcodesim/versioninfo.json   goversioninfo input → resource_windows_*.syso
 │   └── g3n_smoke/main.go       single-file API skeleton (build-tag `smoke`, excluded by default)
 ├── internal/
 │   ├── parser/                 1:1 port of v2's parser.py + golden tests vs sample.nc
@@ -127,10 +131,20 @@ gcode_viewer_v3/
 │   ├── ui/
 │   │   ├── window.go           App, scene, camera, animation tick, key handlers
 │   │   ├── orbiter.go          custom Z-up orbit controller (replaces g3n's Y-up OrbitControl)
-│   │   ├── toolbar.go          two-row toolbar + Options dropdown panel
+│   │   ├── toolbar.go          two-row toolbar + Options + Tutorials dropdown panels
+│   │   ├── tutorials.go        //go:embed tutorials/*.nc  → bundled tutorial dropdown
+│   │   ├── tutorials/*.nc      6 runnable .nc files baked into the binary
+│   │   ├── settings.go         persisted skipped-update-versions (UserConfigDir)
+│   │   ├── update_prompt.go    GitHub-Releases-API update check + native Yes/No dialogs
+│   │   ├── openfile_*.go       darwin: Apple Event handler for double-clicked .nc; other: stub
+│   │   ├── register_*.go       windows: HKCU\Software\Classes file association; other: stub
 │   │   └── dialogs.go          sqweek/dialog file open + error message
-└── (gcodesim.exe              gitignored build artifact)
+└── (gcodesim.exe / GcodeSimV3.app  — gitignored build artifacts)
 ```
+
+**Single source tree, two builds.** Source is fully cross-platform; the build-tagged `*_darwin.go` / `*_windows.go` files split platform-specific logic. The Windows-only `Info.plist` is harmless on Windows builds (Go ignores it); the macOS-only `versioninfo.json` is harmless on Mac builds.
+
+**Embedded tutorials.** `internal/ui/tutorials.go` uses `//go:embed tutorials/*.nc` to bundle 6 starter programs into the binary. The toolbar has a "Tutorials ▾" dropdown that lists them; clicking one parses the embedded bytes through `loadBytes` (same code path as `loadFile`, just no disk I/O). The directory must live INSIDE the package using the embed directive — that's why `tutorials/` lives at `internal/ui/tutorials/` rather than the repo root.
 
 **Key architectural choices that took real debugging to find:**
 
@@ -146,20 +160,11 @@ gcode_viewer_v3/
 
 - **Material thickness ("through cut") via `through[]` markers + dropped quads.** `Cut()` flags cells whose Z reaches `-MaterialThickness`. `RefreshMesh` emits degenerate triangles for fully-through quads, which the GPU draws as nothing — produces real holes in the mesh, so cutout parts visually separate from the surrounding stock.
 
-- **Toolbar dropdown panel is a SIBLING of the toolbar (not a child).** g3n clips child panels to parent bounds. The Options dropdown extends below the 64-px toolbar so it'd be clipped to invisibility if parented. We expose `Toolbar.OptionsPanel` and the caller adds it to `sceneRoot` separately.
+- **Toolbar dropdown panels are SIBLINGS of the toolbar (not children).** g3n clips child panels to parent bounds. The Options + Tutorials dropdowns extend below the 64-px toolbar so they'd be clipped to invisibility if parented. We expose `Toolbar.OptionsPanel` + `Toolbar.TutorialsPanel` and the caller adds them to `sceneRoot` separately. Toggle behavior: opening one closes the other (avoids visual overlap).
 
 - **g3n texture FlipY is on by default.** The Standard vertex shader does `texcoord.y = 1.0 - texcoord.y` when the texture's FlipY flag is set. Our font.DrawText image already has row 0 at top, so we call `tex.SetFlipY(false)` on label textures. Without this, view-cube labels render upside down.
 
 - **`material.Basic` IGNORES textures.** Its fragment shader is literally `FragColor = vec4(Color, 1.0)`. Any `mat.AddTexture` call on Basic is silently dropped. Use `material.Standard` for textured meshes (with vertex normals so lighting works).
-
-### `gcode_viewer_v3_mac/` — macOS build harness
-
-Mirrors v3's source tree plus:
-- `build.sh` — universal-binary build (arm64 + amd64 via `lipo`), auto icon conversion (`icon.ico` → `icon.icns` via macOS's built-in `sips` + `iconutil`), bundles into `GcodeSimV3.app`.
-- `Info.plist` — bundle metadata, Retina support, `.nc/.gcode/.tap` file association.
-- `icon.ico` — kept for the build script (converted to `icon.icns` at build time).
-
-Source under `cmd/` and `internal/` is currently a manual copy of `gcode_viewer_v3/`. **When making changes to v3, update both trees** until we collapse to a single source. `build.sh` runs only on a Mac (CGo + GLFW require native clang); `gcodesim`/`GcodeSimV3.app`/`icon.icns` are gitignored build artifacts.
 
 ### Cross-cutting things that have already been investigated
 

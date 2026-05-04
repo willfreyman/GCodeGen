@@ -1,37 +1,34 @@
 # gcode_viewer_v3
 
 Go port of `gcode_viewer_v2/` (Python + VTK + PyQt5) using the
-[g3n](https://github.com/g3n/engine) engine. Targets a much smaller
-distributable `.exe` (~16-20 MB stripped vs ~180-220 MB for the PyInstaller
-build of v2).
+[g3n](https://github.com/g3n/engine) engine. Single ~5 MB binary vs
+~180-220 MB for the PyInstaller build of v2.
 
-Status: **M2 — first 3D window, toolpath / stock / tool rendering, file open**.
-Animation lands in M3 (heightmap removal sim). See
-`/home/will/.claude/plans/i-want-to-turn-zippy-stroustrup.md` for the full plan.
+**Single source tree** for both Windows and macOS — the build-tagged
+`*_darwin.go` / `*_windows.go` files split platform-specific logic.
+`build.ps1` / `build.bat` builds for Windows; `build.sh` builds the
+universal-binary `.app` for macOS.
 
-## Build & run
+## Build
 
-Requires Go 1.22+ and a C compiler (TDM-GCC or MSYS2 mingw-w64 on Windows).
+Requires Go 1.22+ and a C compiler (TDM-GCC or MSYS2 mingw-w64 on
+Windows; Xcode CLI tools on macOS).
 
-First-time setup:
 ```
-cd gcode_viewer_v3
-go mod tidy            # downloads g3n, sqweek/dialog, transitive deps
-```
+# Windows
+.\build.bat              # → gcodesim.exe (with icon, version info)
 
-Build & run:
-```
-go build .\cmd\gcodesim
-gcodesim.exe              # empty window; press Ctrl+O to load a file
-gcodesim.exe path\to\file.nc   # loads on startup
+# macOS
+./build.sh               # → GcodeSimV3.app + GcodeSimV3.app.zip
+open ./GcodeSimV3.app
 ```
 
-Keys:
-- **Ctrl+O** — open a `.nc` / `.gcode` / `.tap` / `.txt` file
-- **R** — reframe the camera to fit the model
-- **Esc** — quit
+For dev iteration without the full build pipeline:
 
-Mouse: orbit (left-drag), pan (right-drag), zoom (wheel).
+```
+go run ./cmd/gcodesim                 # quick run (no icon, no version stamp)
+go run ./cmd/gcodesim path/to/file.nc # load a file at startup
+```
 
 ## Tests
 
@@ -39,31 +36,36 @@ Mouse: orbit (left-drag), pan (right-drag), zoom (wheel).
 go test ./internal/parser/...
 ```
 
-The parser tests assert byte-exact parity against canonical output from the
-Python v2 reference parser, computed once from
-`internal/parser/testdata/sample.nc`. Any test failure means the Go parser
-has drifted from `gcode_viewer_v2/parser.py`.
+Asserts byte-exact parity against canonical output from the Python v2
+reference parser. Any failure means the Go parser has drifted from
+`gcode_viewer_v2/parser.py`.
 
 ## Module layout
 
 ```
 gcode_viewer_v3/
-├── go.mod
-├── README.md
-├── cmd/
-│   ├── gcodesim/main.go        production entry point — opens g3n window
-│   └── g3n_smoke/main.go       reference single-file API skeleton (kept as
-│                               living docs; not part of the shipped binary)
+├── go.mod / go.sum             module gcodegen.local/viewer
+├── build.ps1 / build.bat       Windows build
+├── build.sh                    macOS build (universal arm64+amd64 .app)
+├── Info.plist                  macOS bundle metadata + .nc file association
+├── icon.ico                    Windows icon; converted to .icns by build.sh
+├── cmd/gcodesim/
+│   ├── main.go                 entry — calls ui.Run()
+│   └── versioninfo.json        goversioninfo input → resource_windows_*.syso
 └── internal/
-    ├── parser/                 (M1) G-code parser + tests
-    ├── scene/
-    │   ├── colors.go           5-stop depth gradient
-    │   ├── path.go             toolpath: cut LineStrips + dashed rapid Lines
-    │   ├── stock.go            translucent stock box + edge wireframe
-    │   └── tool.go             5-part end-mill assembly under a core.Node
+    ├── parser/                 G-code parser (1:1 port of v2's parser.py)
+    ├── scene/                  actors: path, stock, tool, view cube, heightmap
     └── ui/
-        ├── dialogs.go          sqweek/dialog file-open + error message
-        └── window.go           App, scene, camera, key handlers, file loader
+        ├── window.go           App, scene, camera, animation tick
+        ├── orbiter.go          Z-up orbit controller (replaces g3n's Y-up one)
+        ├── toolbar.go          two-row toolbar + Options/Tutorials dropdowns
+        ├── tutorials.go        //go:embed tutorials/*.nc
+        ├── tutorials/*.nc      6 starter programs baked into the binary
+        ├── settings.go         persisted skipped-update-versions
+        ├── update_prompt.go    GitHub-API check + native Yes/No dialogs
+        ├── openfile_*.go       darwin: Apple Event handler for double-click
+        ├── register_*.go       windows: HKCU file association
+        └── dialogs.go          sqweek/dialog file open + error message
 ```
 
 ## Known parity quirks (preserved from Python)
@@ -76,13 +78,3 @@ gcode_viewer_v3/
   with `G01`/`G02`/`G03` notation start showing up.
 - R-form arcs (`G2 X.. Y.. R..`) are silently treated as degenerate moves —
   same as Python.
-
-## Build environment (eventual M2+ requirements, not needed for M1 CLI)
-
-Once g3n lands in M2, the build needs:
-
-- Go 1.22+ on PATH
-- TDM-GCC or MSYS2 mingw-w64 (g3n requires CGo for OpenGL via go-gl/glfw)
-- `CGO_ENABLED=1`, `CC=gcc`
-
-The M1 parser package has no CGo deps and builds with plain `go build`.

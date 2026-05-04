@@ -21,10 +21,12 @@ target. v3 ships as a **single ~5 MB binary** vs ~200 MB for v2.
   toolbar button, the material-removal heightmap, through-cut, view
   cube, mouse + keyboard shortcuts, file formats, settings, and
   troubleshooting.
-* **[`tutorials/`](tutorials/)** — six runnable `.nc` files for new
-  users, from a basic square outline to a multi-operation program
-  with pockets, drills, slots, and through-cuts. Each file has an
-  in-line comment header explaining what to look for.
+* **Tutorials are bundled into the binary** — open `gcodesim.exe` /
+  `GcodeSimV3.app` and click **Tutorials ▾** in the toolbar for a
+  curriculum of six `.nc` programs (basic outline → pocket → arcs →
+  pyramid → through-cut → multi-op). Each file has an in-line comment
+  header explaining what to look for. Source lives at
+  [`gcode_viewer_v3/internal/ui/tutorials/`](gcode_viewer_v3/internal/ui/tutorials/).
 * **[`CLAUDE.md`](CLAUDE.md)** — architecture notes for developers
   working on the source.
 
@@ -53,7 +55,7 @@ Requires **Go 1.22+** and a C compiler (TDM-GCC or MSYS2 mingw-w64) for CGo.
 ### Viewer (v3, Go) — macOS
 
 ```sh
-cd gcode_viewer_v3_mac
+cd gcode_viewer_v3
 ./build.sh                  # produces GcodeSimV3.app (universal arm64+amd64)
 open ./GcodeSimV3.app
 ```
@@ -61,6 +63,11 @@ open ./GcodeSimV3.app
 Requires **Go 1.22+** and Xcode CLI tools (`xcode-select --install`).
 First launch may show "unidentified developer" — right-click → Open once
 to bypass Gatekeeper.
+
+> **Single source tree.** Both the Windows (`build.ps1` / `build.bat`)
+> and macOS (`build.sh`) build scripts live in `gcode_viewer_v3/`. The
+> Go source is fully cross-platform; build-tagged `*_darwin.go` /
+> `*_windows.go` files split platform-specific logic.
 
 ### Controls (both platforms)
 
@@ -111,7 +118,7 @@ gh release create $TAG --title "GcodeSimV3 $TAG" --notes "What changed: ..."
 gh release upload $TAG gcode_viewer_v3/gcodesim.exe --clobber
 
 # Upload macOS bundle (run after ./build.sh on Mac)
-gh release upload $TAG gcode_viewer_v3_mac/GcodeSimV3.app.zip --clobber
+gh release upload $TAG gcode_viewer_v3/GcodeSimV3.app.zip --clobber
 ```
 
 `--clobber` lets you re-upload if you build a new version of the same
@@ -129,16 +136,17 @@ GCodeGen/
 ├── gcodegen.py              ← Tkinter sketch-to-G-code editor
 ├── gcode_preview.py         ← legacy Tkinter viewer
 │
-├── gcode_viewer_v3/         ← active viewer (Go + g3n) — Windows/Linux dev
+├── gcode_viewer_v3/         ← active viewer (Go + g3n) — single cross-platform tree
 │   ├── go.mod
-│   ├── build.ps1            ← one-shot Windows build
+│   ├── build.ps1 / .bat     ← one-shot Windows build
+│   ├── build.sh             ← one-shot macOS build (universal arm64+amd64 .app)
+│   ├── Info.plist           ← macOS bundle metadata + .nc file association
 │   ├── cmd/gcodesim/        ← entry point
 │   └── internal/
 │       ├── parser/          ← G-code parser (1:1 port of v2's parser.py)
 │       ├── scene/           ← actors: path, stock, tool, view cube, heightmap
 │       └── ui/              ← window, toolbar, orbiter, dialogs
-│
-├── gcode_viewer_v3_mac/     ← macOS build harness (mirrors v3 source + build.sh + Info.plist)
+│           └── tutorials/   ← 6 .nc files baked into the binary via go:embed
 │
 ├── gcode_viewer_v2/         ← reference viewer (Python + VTK + PyQt5)
 │   ├── app.py

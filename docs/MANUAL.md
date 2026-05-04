@@ -45,8 +45,12 @@ two-row toolbar at top, and a small chamfered cube widget in the
 top-right corner. Click **Open .nc...** (or press `Ctrl+O` /
 `Cmd+O`) to load a G-code file.
 
-Try the included [tutorials](../tutorials/) for a walk through the
-features.
+**Tutorials are baked into the binary.** Click **Tutorials ▾** in the
+toolbar for a curriculum of six runnable `.nc` programs (basic outline
+→ pocket → arcs → pyramid → through-cut → multi-op). The same files
+also live in source at
+[`gcode_viewer_v3/internal/ui/tutorials/`](../gcode_viewer_v3/internal/ui/tutorials/)
+if you want to read or modify them.
 
 [rel]: https://github.com/willfreyman/GCodeGen/releases
 
@@ -449,7 +453,7 @@ If any of these matter for your workflow, file an issue on GitHub.
 
 ## See also
 
-* [`tutorials/`](../tutorials/) — runnable example `.nc` files with
-  in-line comments
+* **Tutorials ▾** dropdown in the app — six runnable `.nc` files
+  (source at [`gcode_viewer_v3/internal/ui/tutorials/`](../gcode_viewer_v3/internal/ui/tutorials/))
 * [`README.md`](../README.md) — install / build quick-start
 * [`CLAUDE.md`](../CLAUDE.md) — architecture notes for developers

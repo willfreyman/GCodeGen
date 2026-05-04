@@ -138,12 +138,14 @@ func Run(initialPath string) {
 		OnBitDiaApplied:            func(d float64) { state.setBitDiameter(d) },
 		OnProgressScrub:            func(f float64) { state.scrubTo(f) },
 		OnMaterialThicknessApplied: func(mm float64) { state.setMaterialThickness(mm) },
+		OnTutorialSelected:         func(name string) { state.loadTutorial(name) },
 	})
 	sceneRoot.Add(state.toolbar.Panel)
-	// OptionsPanel is a sibling of the toolbar (not a child) so it can render
-	// freely below the toolbar instead of being clipped to the toolbar's
-	// 64-pixel rectangle.
+	// OptionsPanel / TutorialsPanel are siblings of the toolbar (not
+	// children) so they can render freely below the toolbar instead of
+	// being clipped to the toolbar's 64-pixel rectangle.
 	sceneRoot.Add(state.toolbar.OptionsPanel)
+	sceneRoot.Add(state.toolbar.TutorialsPanel)
 
 	resize := func(_ string, _ interface{}) {
 		// On HiDPI displays (macOS Retina especially) the framebuffer is
@@ -326,15 +328,27 @@ func (s *sceneState) openFileDialog() {
 	}
 }
 
-// loadFile parses, tears down the previous content tree, and rebuilds the
-// path/stock/tool actors plus the playback state for the new program.
+// loadFile reads a .nc from disk and hands the bytes to loadBytes.
+// displayName for error messages is just the file's base name.
 func (s *sceneState) loadFile(path string) error {
 	moves, err := parser.ParseFile(path)
 	if err != nil {
 		return err
 	}
+	return s.installMoves(moves, filepath.Base(path))
+}
+
+// loadBytes parses an in-memory .nc (used for the embedded tutorials)
+// and installs it into the scene the same way loadFile does.
+func (s *sceneState) loadBytes(data []byte, displayName string) error {
+	return s.installMoves(parser.Parse(string(data)), displayName)
+}
+
+// installMoves does the actual scene rebuild given a parsed move list.
+// Shared between loadFile (disk) and loadBytes (embedded tutorials).
+func (s *sceneState) installMoves(moves []*parser.Move, displayName string) error {
 	if len(moves) == 0 {
-		return fmt.Errorf("no moves parsed from %s", filepath.Base(path))
+		return fmt.Errorf("no moves parsed from %s", displayName)
 	}
 
 	min, max, ok := parser.Bounds(moves)
@@ -378,6 +392,18 @@ func (s *sceneState) loadFile(path string) error {
 
 	s.frameCamera()
 	return nil
+}
+
+// loadTutorial reads the embedded tutorial bytes and installs them.
+func (s *sceneState) loadTutorial(displayName string) {
+	data, err := LoadTutorialBytes(displayName)
+	if err != nil {
+		ShowError("Tutorial", "Failed to load tutorial %q:\n%v", displayName, err)
+		return
+	}
+	if err := s.loadBytes(data, displayName); err != nil {
+		ShowError("Tutorial", "Failed to parse tutorial %q:\n%v", displayName, err)
+	}
 }
 
 // tickPlayback advances simulated time, repositions the tool, updates the

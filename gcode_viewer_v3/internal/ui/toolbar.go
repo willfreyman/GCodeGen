@@ -24,6 +24,7 @@ const (
 	buttonHeight     = 22.0
 	buttonGap        = 6.0
 	buttonOpenW      = 100.0
+	buttonTutorialsW = 100.0
 	buttonPlayW      = 70.0
 	buttonResetW     = 60.0
 	buttonReframeW   = 24.0
@@ -42,14 +43,15 @@ var toolbarBgColor = math32.Color{R: 0.18, G: 0.20, B: 0.24}
 
 // ToolbarCallbacks bundles the user-action hooks.
 type ToolbarCallbacks struct {
-	OnOpen                    func()
-	OnPlayPause               func()
-	OnReset                   func()
-	OnReframe                 func()
-	OnSpeedChanged            func(speedMult float64)
-	OnBitDiaApplied           func(diameter float64)
-	OnProgressScrub           func(fraction float64)
+	OnOpen                     func()
+	OnPlayPause                func()
+	OnReset                    func()
+	OnReframe                  func()
+	OnSpeedChanged             func(speedMult float64)
+	OnBitDiaApplied            func(diameter float64)
+	OnProgressScrub            func(fraction float64)
 	OnMaterialThicknessApplied func(mm float64) // 0 = no through-cut
+	OnTutorialSelected         func(displayName string)
 }
 
 // Toolbar is the top control strip.
@@ -61,14 +63,16 @@ type Toolbar struct {
 	bitEdit  *gui.Edit
 	playBtn  *gui.Button
 
-	optionsBtn *gui.Button
+	optionsBtn   *gui.Button
+	tutorialsBtn *gui.Button
 
-	// OptionsPanel is the dropdown that appears below the toolbar when the
-	// Options button is clicked. Exposed so the caller can add it to the
-	// scene root SEPARATELY from the toolbar Panel — child panels are
-	// clipped to their parent's bounds, so the dropdown wouldn't render
-	// (it'd be entirely outside the toolbar's 64-pixel rectangle).
-	OptionsPanel *gui.Panel
+	// OptionsPanel / TutorialsPanel are dropdowns that appear below the
+	// toolbar when their button is clicked. Exposed so the caller can add
+	// them to the scene root SEPARATELY from the toolbar Panel — child
+	// panels are clipped to their parent's bounds, so the dropdown wouldn't
+	// render (it'd be entirely outside the toolbar's 64-pixel rectangle).
+	OptionsPanel   *gui.Panel
+	TutorialsPanel *gui.Panel
 
 	matEdit *gui.Edit
 
@@ -104,6 +108,24 @@ func NewToolbar(width float32, initialBitDia float64, callbacks ToolbarCallbacks
 	})
 	tb.Panel.Add(openBtn)
 	x += buttonOpenW + buttonGap
+
+	// Tutorials ▾ — opens a dropdown listing the bundled .nc tutorials.
+	// Embedded in the binary so first-time users have something to load
+	// without hunting for files.
+	tb.tutorialsBtn = gui.NewButton("Tutorials ▾")
+	tb.tutorialsBtn.SetSize(buttonTutorialsW, buttonHeight)
+	tb.tutorialsBtn.SetPosition(x, yRow1)
+	tutorialsBtnX := x
+	tb.tutorialsBtn.Subscribe(gui.OnClick, func(string, interface{}) {
+		// Toggle Tutorials; close Options if it was open so they don't overlap.
+		open := !tb.TutorialsPanel.Visible()
+		tb.TutorialsPanel.SetVisible(open)
+		if open && tb.OptionsPanel != nil {
+			tb.OptionsPanel.SetVisible(false)
+		}
+	})
+	tb.Panel.Add(tb.tutorialsBtn)
+	x += buttonTutorialsW + buttonGap
 
 	// Play / Pause toggle
 	tb.playBtn = gui.NewButton("Play")
@@ -204,7 +226,11 @@ func NewToolbar(width float32, initialBitDia float64, callbacks ToolbarCallbacks
 	tb.optionsBtn.SetPosition(x, yRow1)
 	optionsBtnX := x
 	tb.optionsBtn.Subscribe(gui.OnClick, func(string, interface{}) {
-		tb.OptionsPanel.SetVisible(!tb.OptionsPanel.Visible())
+		open := !tb.OptionsPanel.Visible()
+		tb.OptionsPanel.SetVisible(open)
+		if open && tb.TutorialsPanel != nil {
+			tb.TutorialsPanel.SetVisible(false)
+		}
 	})
 	tb.Panel.Add(tb.optionsBtn)
 
@@ -213,6 +239,7 @@ func NewToolbar(width float32, initialBitDia float64, callbacks ToolbarCallbacks
 	// responsible for adding it to the scene root so it isn't clipped to
 	// the toolbar's bounds.
 	tb.OptionsPanel = buildOptionsPanel(optionsBtnX, toolbarHeight, tb)
+	tb.TutorialsPanel = buildTutorialsPanel(tutorialsBtnX, toolbarHeight, tb)
 
 	// Bit edit also commits on Enter and on focus loss.
 	tb.bitEdit.Subscribe(window.OnKeyDown, func(_ string, ev interface{}) {
@@ -285,6 +312,44 @@ func buildOptionsPanel(x, y float32, tb *Toolbar) *gui.Panel {
 		tb.commitMaterialThickness()
 	})
 
+	return panel
+}
+
+// buildTutorialsPanel constructs the dropdown shown when the Tutorials
+// button is clicked. One button per Tutorial entry, vertically stacked.
+// Click → fires OnTutorialSelected with the display name and closes the
+// panel.
+func buildTutorialsPanel(x, y float32, tb *Toolbar) *gui.Panel {
+	const (
+		panelW    = 240.0
+		rowHeight = 26.0
+		padTop    = 8.0
+		padX      = 8.0
+		padBottom = 8.0
+	)
+	count := float32(len(Tutorials))
+	panelH := padTop + count*rowHeight + (count-1)*4 + padBottom
+
+	panel := gui.NewPanel(panelW, panelH)
+	panel.SetColor(&math32.Color{R: 0.22, G: 0.24, B: 0.28})
+	panel.SetPosition(x, y)
+	panel.SetVisible(false)
+
+	rowY := float32(padTop)
+	for _, t := range Tutorials {
+		name := t.DisplayName // capture loop var
+		btn := gui.NewButton(name)
+		btn.SetSize(panelW-padX*2, rowHeight)
+		btn.SetPosition(padX, rowY)
+		btn.Subscribe(gui.OnClick, func(string, interface{}) {
+			panel.SetVisible(false)
+			if tb.cb.OnTutorialSelected != nil {
+				tb.cb.OnTutorialSelected(name)
+			}
+		})
+		panel.Add(btn)
+		rowY += rowHeight + 4
+	}
 	return panel
 }
 
