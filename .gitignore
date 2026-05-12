@@ -43,6 +43,16 @@ gcode_viewer_v3/GcodeSimV3.app/
 gcode_viewer_v3/GcodeSimV3.app.zip
 gcode_viewer_v3/mac/icon.icns
 
+# ── Go (gcode_generator_v2) ───────────────────────────────────────────────
+gcode_generator_v2/gcodegen
+gcode_generator_v2/gcodegen.exe
+gcode_generator_v2/gcodegen-arm64
+gcode_generator_v2/gcodegen-amd64
+gcode_generator_v2/GcodeGenV1.app/
+gcode_generator_v2/GcodeGenV1.app.zip
+gcode_generator_v2/mac/icon.icns
+gcode_generator_v2/vendor/
+
 # Old v3_mac/ tree was collapsed into v3/ but a stray "git add" on Mac
 # accidentally re-committed build artifacts there. Guard against that
 # happening again — anything at this path is now ignored.

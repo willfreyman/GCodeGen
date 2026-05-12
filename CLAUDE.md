@@ -4,17 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout
 
-Four apps live here, in two generations. **`gcode_viewer_v3/`** (Go + g3n)
-is the **active development target** and is now a single cross-platform
-source tree with both Windows and macOS build scripts in the same folder.
-v2 (Python + VTK) is the previous reference implementation; the two
-Tkinter scripts at root are kept working but are not where new features
-should land unless asked.
+Five apps live here, in two generations of viewer + two generations of
+editor. **`gcode_viewer_v3/`** and **`gcode_generator_v2/`** (both Go)
+are the **active development targets** — separate modules so each ships
+as its own self-contained binary with no shared dependency surface. The
+older Python apps (v1 editor + v1/v2 viewers) are kept working but are
+not where new features should land unless asked.
 
-- `gcodegen.py` — **Editor.** Tkinter sketchpad: draw freehand toolpaths, set per-stroke depths + machine settings, export `.nc`. Stdlib-only. Has its own in-app simulator and finished-product preview windows.
+- `gcodegen.py` — **Editor v1.** Tkinter sketchpad: draw freehand toolpaths, set per-stroke depths + machine settings, export `.nc`. Stdlib-only. Has its own in-app simulator and finished-product preview windows. Reference implementation for v2 (Go).
 - `gcode_preview.py` — **Legacy Tk viewer.** Earlier Tkinter-based G-code viewer with a hand-rolled 3D projection on a 2D Canvas. Performance-fixed in Stage 1 of the v2 refactor (see Stage-1 notes below). Kept around for users who can't run VTK.
 - `gcode_viewer_v2/` — **Reference viewer (Python).** VTK + PyQt5 with real 3D, material-removal heightmap simulation, splash, debug window, view cube, etc. Ships as `GcodeSimV1.exe` via PyInstaller (~200 MB). The Go port (v3) is a port of this — when something is missing in v3, look at v2 for the spec.
-- `gcode_viewer_v3/` — **Active viewer (Go).** Pure-Go rewrite using the [g3n](https://github.com/g3n/engine) engine. Same features as v2 (toolpath, stock, end-mill, view cube, material-removal heightmap with through-cut, playback controls, options dropdown, embedded tutorials), but ships as a single ~5 MB `.exe` (vs ~200 MB for v2). **Shared Go source under `cmd/` + `internal/`; platform-specific build scripts and resources live in dedicated `windows/` and `mac/` subfolders.**
+- `gcode_viewer_v3/` — **Active viewer (Go).** Pure-Go rewrite using the [g3n](https://github.com/g3n/engine) engine. Same features as v2 (toolpath, stock, end-mill, view cube, material-removal heightmap with through-cut, playback controls, options dropdown, embedded tutorials), but ships as a single ~5 MB `.exe` (vs ~200 MB for v2). **Shared Go source under `cmd/` + `internal/`; platform-specific build scripts and resources live in dedicated `windows/` and `mac/` subfolders.** Module: `gcodegen.local/viewer`.
+- `gcode_generator_v2/` — **Active editor (Go).** 1:1 port of `gcodegen.py` using **Ebiten + ebitenui** (chosen over g3n because the editor is fundamentally a 2D paint canvas with a heavy entry-form right panel — g3n's pixel-pushed `gui.*` widgets are the wrong shape for that workload). Same shape as v3: `cmd/` + `internal/` + `windows/` + `mac/`. Module: `gcodegen.local/generator`. See the dedicated section below.
 
 There is no shared library between root-level scripts and v2; the v2 viewer's `parser.py` is a clean port of the root scripts' parsing logic with no UI deps. v3's parser is a 1:1 port of v2's.
 
@@ -24,9 +25,14 @@ There is no shared library between root-level scripts and v2; the v2 viewer's `p
 python gcodegen.py                                              # editor (Tk, stdlib-only)
 python gcode_preview.py                                         # legacy Tk viewer
 python -m gcode_viewer_v2.app                                   # v2 VTK viewer (run from project root)
-cd gcode_viewer_v3 && go run ./cmd/gcodesim                     # v3 Go viewer (Windows/Linux dev — quick iteration)
-cd gcode_viewer_v3/windows && .\build.bat                       # v3 Go viewer (Windows release build → ../gcodesim.exe)
-cd gcode_viewer_v3/mac && ./build.sh && open ../GcodeSimV3.app  # v3 Go viewer (macOS release build → ../GcodeSimV3.app)
+cd gcode_viewer_v3 && go run ./cmd/gcodesim                          # v3 Go viewer (dev — quick iteration)
+cd gcode_viewer_v3 && go test ./internal/parser/...                  # v3 parser golden tests
+cd gcode_viewer_v3/windows && .\build.bat                            # v3 viewer (Windows release → ../gcodesim.exe)
+cd gcode_viewer_v3/mac && ./build.sh && open ../GcodeSimV3.app       # v3 viewer (macOS release → ../GcodeSimV3.app)
+cd gcode_generator_v2 && go run ./cmd/gcodegen                       # v2 Go editor (dev)
+cd gcode_generator_v2 && go test ./internal/gen/...                  # v2 emitter+model tests
+cd gcode_generator_v2/windows && .\build.bat                         # v2 editor (Windows release → ../gcodegen.exe)
+cd gcode_generator_v2/mac && ./build.sh && open ../GcodeGenV1.app    # v2 editor (macOS release → ../GcodeGenV1.app)
 ```
 
 The editor auto-opens the Finished Product Preview window 120ms after launch (`window.after(120, open_preview)` in `gcodegen.py`). That window is intentionally non-closable (`WM_DELETE_WINDOW` is bound to a no-op) — it deiconifies/lifts on subsequent calls instead of being recreated.
@@ -172,6 +178,51 @@ gcode_viewer_v3/
 - **g3n texture FlipY is on by default.** The Standard vertex shader does `texcoord.y = 1.0 - texcoord.y` when the texture's FlipY flag is set. Our font.DrawText image already has row 0 at top, so we call `tex.SetFlipY(false)` on label textures. Without this, view-cube labels render upside down.
 
 - **`material.Basic` IGNORES textures.** Its fragment shader is literally `FragColor = vec4(Color, 1.0)`. Any `mat.AddTexture` call on Basic is silently dropped. Use `material.Standard` for textured meshes (with vertex normals so lighting works).
+
+### `gcode_generator_v2/` — Go + Ebiten, the active editor
+
+1:1 port of `gcodegen.py` in its own Go module (`gcodegen.local/generator`), separate from the viewer (`gcodegen.local/viewer`). GUI stack is **Ebiten + ebitenui** rather than g3n — the editor is fundamentally a 2D paint canvas with a heavy entry-form right panel, and g3n's pixel-pushed `gui.*` widgets are the wrong shape for that workload.
+
+```
+gcode_generator_v2/
+├── go.mod / go.sum             module gcodegen.local/generator
+├── cmd/gcodegen/main.go        argv dispatch: editor | sim | preview
+├── internal/
+│   ├── assets/                 //go:embed FreeSansBold.ttf
+│   ├── version/                build-time version stamp + GitHub release check
+│   ├── gen/                    pure data model + G-code emitter (no UI deps)
+│   │   ├── model.go            Editor struct + state methods
+│   │   ├── coords.go           PxToMM/MMToPx + hit tests (1:1 of gcodegen.py:30-150)
+│   │   ├── ops.go              OpsMM/OpsPx/AllStrokesPx (gcodegen.py:293-327)
+│   │   ├── presets.go          MAT_MACHINE_PRESETS + 7-color palette
+│   │   ├── emit.go             Emit(ops, machine) string — byte-identical to gcodegen.py:380-405
+│   │   ├── ipc.go              UpdateMessage JSON wire format
+│   │   └── *_test.go           25 unit tests; emit_test.go golden against testdata/*.nc
+│   ├── editor/                 main editor Ebiten game
+│   ├── sim/                    toolpath simulation subprocess (animated playback)
+│   ├── preview/                finished-product preview subprocess (textured surface render)
+│   └── shared/                 settings.go (~/UserConfigDir/GcodeGen/settings.json)
+├── windows/                    build.ps1 + build.bat + versioninfo.json + icon.ico → ../gcodegen.exe
+└── mac/                        build.sh + Info.plist + icon.ico → ../GcodeGenV1.app
+```
+
+**Single binary, three modes** (Ebiten is single-window — no `NewWindow` API; multi-window only via subprocess):
+- `gcodegen` — main editor window (1024×600). Argv-less.
+- `gcodegen sim` — toolpath simulation subprocess. Reads `UpdateMessage` JSON lines from stdin.
+- `gcodegen preview` — finished-product preview subprocess. Same stdin protocol.
+
+The editor spawns the two aux processes via `os/exec`, holds their stdin pipes, and broadcasts a snapshot every 3 frames (~20 Hz throttle). Preview is auto-spawned at editor startup (mirrors `window.after(120, open_preview)` in the Python). When an aux window is closed, `cmd.Wait()` in a goroutine clears the editor's pointer so the next click respawns.
+
+**Decisions worth remembering before editing:**
+
+- **Separate Go module**, not a sibling binary in v3. The two apps have completely different deps (g3n+OpenGL vs Ebiten+ebitenui+sqweek/dialog) and no shared internal API; isolating modules keeps each app's dep tree small. The font (FreeSansBold.ttf) is duplicated across `gcode_viewer_v3/internal/scene/` and `gcode_generator_v2/internal/assets/` — that's 800 KB total, acceptable cost for module independence.
+- **Ebiten + ebitenui, not Fyne / Gio.** Ebiten is purpose-built for 2D drawing (freehand strokes are native via `vector.StrokeLine`); ebitenui supplies the form widgets the right panel needs (`Container`, `RowLayout`, `TextInput`, `Slider`, `Checkbox`, `ScrollContainer`, `ProgressBar`, `Button`).
+- **Subprocess multi-window.** Ebiten v2 explicitly cannot call `RunGame` twice in one process. The user wanted aux windows as separate OS windows (not in-app overlays), so each "window" is a re-exec of the same binary in a different mode. Boot cost ~300-800 ms on first launch is acceptable for a desktop CAM tool.
+- **Mouse polling, not event callbacks.** Ebiten only exposes pressed / just-pressed / just-released via `inpututil`. The press/drag/release/motion handlers in `internal/editor/input.go` look very different from gcodegen.py's Tk callbacks, but the state mutations they perform are identical.
+- **Trails image vs ghosts image** in sim. Ghosts is rebuilt only when ops change; trails is appended to as playback advances. Avoids redrawing every cut every frame at 60 fps.
+- **Format strings matter for `Emit`.** Python's `f"{depth}"` (default `__str__`) gives `"-1.0"` for -1.0; Go's `strconv.FormatFloat('g', -1)` gives `"-1"`. The `pyFloat` helper appends `.0` when the formatted value has no decimal/exponent. The golden tests pin byte-identity against `testdata/perim_only.nc`, `single_stroke.nc`, `three_strokes.nc`.
+- **NineSlice solid colors** for button/slider/checkbox states. Avoids bundling 12 PNG assets just for flat fills.
+- **No file association on macOS** for the editor (no `UTExportedTypeDeclarations` in `mac/Info.plist`). The editor exports `.nc`, never opens it; v3's viewer owns the .nc UTI. Distinct bundle IDs (`com.nightbots10686.gcodesimv3` vs `com.nightbots10686.gcodegenv1`) so both `.app`s can coexist on the same Mac.
 
 ### Deferred work — polygon-union renderer
 

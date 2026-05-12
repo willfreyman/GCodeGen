@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>GcodeGenV1</string>
+    <key>CFBundleDisplayName</key>
+    <string>GcodeGenV1</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.nightbots10686.gcodegenv1</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+
+    <key>CFBundleExecutable</key>
+    <string>gcodegen</string>
+    <key>CFBundleIconFile</key>
+    <string>icon.icns</string>
+
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <key>LSMinimumSystemVersion</key>
+    <string>10.13</string>
+
+    <!-- The editor doesn't open files (it only exports), so we don't
+         declare any UTIs or document types here. Keeps the bundle
+         lighter and avoids competing with GcodeSimV3 for .nc ownership. -->
+</dict>
+</plist>
