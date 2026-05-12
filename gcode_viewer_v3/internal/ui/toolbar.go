@@ -14,7 +14,7 @@ import (
 // Toolbar layout: two rows.
 //
 //	Row 1 (height = toolbarRowH):
-//	  [Open .nc] [Play/Pause] [Reset] [R] | Speed: [---|---] 1.0x | Bit: [6.35] mm [Set]
+//	  [Open .nc] [Tutorials ▾] [Play/Pause] [Reset] [R] | Speed: [---|---] 1.0x | Bit: [6.35] mm [Set] [Options ▾] [Walls/bottom]
 //	Row 2 (height = toolbarRowH):
 //	  [progress slider, full width — slidable to scrub]
 const (
@@ -35,6 +35,7 @@ const (
 	bitEditW         = 60.0
 	bitUnitW         = 26.0
 	bitApplyW        = 44.0
+	shellToggleW     = 112.0
 	progressPaddingX = 6.0
 	progressHeight   = 18.0
 )
@@ -51,6 +52,7 @@ type ToolbarCallbacks struct {
 	OnBitDiaApplied            func(diameter float64)
 	OnProgressScrub            func(fraction float64)
 	OnMaterialThicknessApplied func(mm float64) // 0 = no through-cut
+	OnStockShellToggled        func(show bool)
 	OnTutorialSelected         func(displayName string)
 }
 
@@ -65,6 +67,7 @@ type Toolbar struct {
 
 	optionsBtn   *gui.Button
 	tutorialsBtn *gui.Button
+	shellCheck   *gui.CheckRadio
 
 	// OptionsPanel / TutorialsPanel are dropdowns that appear below the
 	// toolbar when their button is clicked. Exposed so the caller can add
@@ -233,6 +236,19 @@ func NewToolbar(width float32, initialBitDia float64, callbacks ToolbarCallbacks
 		}
 	})
 	tb.Panel.Add(tb.optionsBtn)
+	x += 90 + buttonGap
+
+	// Shell toggle — shows/hides material-thickness side walls and bottom.
+	tb.shellCheck = gui.NewCheckBox("Walls/bottom")
+	tb.shellCheck.SetValue(true)
+	tb.shellCheck.SetPosition(x, yRow1+3)
+	tb.shellCheck.SetSize(shellToggleW, buttonHeight)
+	tb.shellCheck.Subscribe(gui.OnChange, func(string, interface{}) {
+		if tb.cb.OnStockShellToggled != nil {
+			tb.cb.OnStockShellToggled(tb.shellCheck.Value())
+		}
+	})
+	tb.Panel.Add(tb.shellCheck)
 
 	// Build the dropdown options panel (initially hidden). It's positioned
 	// in WINDOW coordinates (not relative to the toolbar) — the caller is

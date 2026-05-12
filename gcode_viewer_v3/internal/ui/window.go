@@ -118,14 +118,15 @@ func Run(initialPath string) {
 	cube := scene.NewViewCube()
 
 	state := &sceneState{
-		win:         win,
-		contentRoot: contentRoot,
-		cam:         cam,
-		orbit:       orbit,
-		cube:        cube,
-		bitDiameter: defaultBitDiameter,
-		focal:       math32.Vector3{X: 0, Y: 0, Z: 0},
-		camDist:     260,
+		win:            win,
+		contentRoot:    contentRoot,
+		cam:            cam,
+		orbit:          orbit,
+		cube:           cube,
+		bitDiameter:    defaultBitDiameter,
+		showStockShell: true,
+		focal:          math32.Vector3{X: 0, Y: 0, Z: 0},
+		camDist:        260,
 	}
 
 	// Toolbar — sits at top, full-width, two rows.
@@ -139,6 +140,7 @@ func Run(initialPath string) {
 		OnBitDiaApplied:            func(d float64) { state.setBitDiameter(d) },
 		OnProgressScrub:            func(f float64) { state.scrubTo(f) },
 		OnMaterialThicknessApplied: func(mm float64) { state.setMaterialThickness(mm) },
+		OnStockShellToggled:        func(show bool) { state.setStockShellVisible(show) },
 		OnTutorialSelected:         func(name string) { state.loadTutorial(name) },
 	})
 	sceneRoot.Add(state.toolbar.Panel)
@@ -312,7 +314,9 @@ type sceneState struct {
 	focal   math32.Vector3
 	camDist float32
 
-	bitDiameter float64
+	bitDiameter       float64
+	materialThickness float64
+	showStockShell    bool
 }
 
 func (s *sceneState) openFileDialog() {
@@ -374,6 +378,8 @@ func (s *sceneState) installMoves(moves []*parser.Move, displayName string) erro
 		0,
 		scene.HeightmapCellSize(s.bitDiameter),
 	)
+	s.heightmap.SetMaterialThickness(s.materialThickness)
+	s.heightmap.SetShowShell(s.showStockShell)
 	s.contentRoot.Add(s.heightmap.Actor(scene.StockColor))
 
 	tool := scene.NewTool(s.bitDiameter)
@@ -491,6 +497,8 @@ func (s *sceneState) resetPlayback() {
 			0,
 			scene.HeightmapCellSize(s.bitDiameter),
 		)
+		s.heightmap.SetMaterialThickness(s.materialThickness)
+		s.heightmap.SetShowShell(s.showStockShell)
 		s.contentRoot.Add(s.heightmap.Actor(scene.StockColor))
 	}
 
@@ -669,15 +677,26 @@ func lerpPoint(a, b parser.Point, t float64) parser.Point {
 }
 
 // setMaterialThickness pushes a new stock-thickness value into the heightmap
-// so future cuts that reach the bottom mark cells as "through". Re-evaluates
-// existing cells against the new bottom and immediately refreshes the mesh
-// (so toggling the value has an instant visual effect).
+// so cells deeper than that value render in the transparent through-cut mesh.
+// Re-evaluates existing cells against the new cutoff and immediately refreshes
+// the mesh (so toggling the value has an instant visual effect).
 func (s *sceneState) setMaterialThickness(mm float64) {
+	s.materialThickness = mm
 	if s.heightmap == nil {
 		return
 	}
 	s.heightmap.SetMaterialThickness(mm)
 	s.heightmap.RefreshMesh()
+}
+
+// setStockShellVisible toggles the material-thickness side walls and bottom
+// mesh without changing the carved top-surface simulation.
+func (s *sceneState) setStockShellVisible(show bool) {
+	s.showStockShell = show
+	if s.heightmap == nil {
+		return
+	}
+	s.heightmap.SetShowShell(show)
 }
 
 // setBitDiameter rebuilds the tool actor at the new bit size. The new tool
