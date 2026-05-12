@@ -312,7 +312,8 @@ type sceneState struct {
 	focal   math32.Vector3
 	camDist float32
 
-	bitDiameter float64
+	bitDiameter       float64
+	materialThickness float64
 }
 
 func (s *sceneState) openFileDialog() {
@@ -374,6 +375,7 @@ func (s *sceneState) installMoves(moves []*parser.Move, displayName string) erro
 		0,
 		scene.HeightmapCellSize(s.bitDiameter),
 	)
+	s.heightmap.SetMaterialThickness(s.materialThickness)
 	s.contentRoot.Add(s.heightmap.Actor(scene.StockColor))
 
 	tool := scene.NewTool(s.bitDiameter)
@@ -491,6 +493,7 @@ func (s *sceneState) resetPlayback() {
 			0,
 			scene.HeightmapCellSize(s.bitDiameter),
 		)
+		s.heightmap.SetMaterialThickness(s.materialThickness)
 		s.contentRoot.Add(s.heightmap.Actor(scene.StockColor))
 	}
 
@@ -669,10 +672,11 @@ func lerpPoint(a, b parser.Point, t float64) parser.Point {
 }
 
 // setMaterialThickness pushes a new stock-thickness value into the heightmap
-// so future cuts that reach the bottom mark cells as "through". Re-evaluates
-// existing cells against the new bottom and immediately refreshes the mesh
-// (so toggling the value has an instant visual effect).
+// so cells deeper than that value render in the transparent through-cut mesh.
+// Re-evaluates existing cells against the new cutoff and immediately refreshes
+// the mesh (so toggling the value has an instant visual effect).
 func (s *sceneState) setMaterialThickness(mm float64) {
+	s.materialThickness = mm
 	if s.heightmap == nil {
 		return
 	}

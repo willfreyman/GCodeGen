@@ -19,6 +19,7 @@ package scene
 import (
 	"math"
 
+	"github.com/g3n/engine/core"
 	"github.com/g3n/engine/geometry"
 	"github.com/g3n/engine/gls"
 	"github.com/g3n/engine/graphic"
@@ -53,10 +54,10 @@ type Heightmap struct {
 	TopZ     float64
 	CellSize float64
 
-	// MaterialThickness, when > 0, sets the bottom of the stock at
-	// -MaterialThickness. Cuts that reach the bottom mark the cell as
-	// "through" — RefreshMesh then drops fully-through quads from the
-	// mesh, producing a real slice/cutout hole in the stock.
+	// MaterialThickness, when > 0, marks cells whose absolute cut depth is
+	// greater than this value as through-cut. RefreshMesh renders fully
+	// through-cut quads into a separate transparent mesh instead of dropping
+	// them or making the whole stock transparent.
 	MaterialThickness float64
 
 	Nx, Ny int
@@ -64,9 +65,9 @@ type Heightmap struct {
 	// heights[iy*Nx + ix] = current top-of-material Z for cell (ix, iy).
 	heights []float32
 
-	// through[iy*Nx + ix] = true once a cut has reached or passed the
-	// bottom of the stock at this cell. Driven by Cut/CutSegment when
-	// MaterialThickness > 0.
+	// through[iy*Nx + ix] = true once abs(heights[i]) exceeds
+	// MaterialThickness. Driven by Cut/CutSegment and SetMaterialThickness
+	// when MaterialThickness > 0.
 	through []bool
 
 	// cell-center XY coords (precomputed once)
@@ -74,10 +75,14 @@ type Heightmap struct {
 	ys []float32
 
 	// Mesh handles populated by BuildActor; used by RefreshMesh to push new
-	// Z values to the GPU.
-	actor   *graphic.Mesh
-	posVBO  *gls.VBO
-	normVBO *gls.VBO
+	// Z values to the GPU. Opaque and through-cut transparent quads are split
+	// into separate meshes because transparency is material-level in g3n.
+	actor *core.Node
+
+	opaquePosVBO   *gls.VBO
+	opaqueNormVBO  *gls.VBO
+	throughPosVBO  *gls.VBO
+	throughNormVBO *gls.VBO
 
 	// surfaceColor lets us recompute lighting/coloring on refresh.
 	surfaceColor math32.Color
@@ -161,16 +166,6 @@ func (h *Heightmap) Cut(toolX, toolY, toolZ, bitRadius float64) bool {
 	ty := float32(toolY)
 	modified := false
 
-	// If a material thickness is set, any cut at or below the bottom marks
-	// the cell as through (the part is sliced out at this point).
-	throughMode := h.MaterialThickness > 0
-	bottomZ := float32(-h.MaterialThickness)
-	cutThrough := throughMode && tz <= bottomZ
-	clampedZ := tz
-	if cutThrough {
-		clampedZ = bottomZ
-	}
-
 	for iy := iy0; iy < iy1; iy++ {
 		row := iy * h.Nx
 		dy := h.ys[iy] - ty
@@ -179,17 +174,9 @@ func (h *Heightmap) Cut(toolX, toolY, toolZ, bitRadius float64) bool {
 			dx := h.xs[ix] - tx
 			if dx*dx+dy2 <= rsq {
 				idx := row + ix
-				if cutThrough {
-					if !h.through[idx] {
-						h.through[idx] = true
-						h.heights[idx] = bottomZ
-						modified = true
-					} else if h.heights[idx] > bottomZ {
-						h.heights[idx] = bottomZ
-						modified = true
-					}
-				} else if h.heights[idx] > clampedZ {
-					h.heights[idx] = clampedZ
+				if h.heights[idx] > tz {
+					h.heights[idx] = tz
+					h.through[idx] = h.isThroughDepth(tz)
 					modified = true
 				}
 			}
@@ -214,26 +201,19 @@ func (h *Heightmap) Reset() {
 }
 
 // SetMaterialThickness sets (or clears, if mm <= 0) the stock thickness used
-// to detect "cut through" cells. Re-evaluates every cell against the new
-// bottom and updates the through[] array; call RefreshMesh afterwards to
-// see the visual change.
+// to detect through-cut cells. Re-evaluates every cell against the new strict
+// rule, abs(depth) > materialThickness; call RefreshMesh afterwards to see the
+// visual change. Stored heights are not clamped, so changing the thickness can
+// immediately move quads between the opaque and transparent meshes.
 func (h *Heightmap) SetMaterialThickness(mm float64) {
 	h.MaterialThickness = mm
-	if mm <= 0 {
-		for i := range h.through {
-			h.through[i] = false
-		}
-		return
-	}
-	bottom := float32(-mm)
 	for i := range h.heights {
-		if h.heights[i] <= bottom {
-			h.heights[i] = bottom
-			h.through[i] = true
-		} else {
-			h.through[i] = false
-		}
+		h.through[i] = h.isThroughDepth(h.heights[i])
 	}
+}
+
+func (h *Heightmap) isThroughDepth(depth float32) bool {
+	return h.MaterialThickness > 0 && math.Abs(float64(depth)) > h.MaterialThickness
 }
 
 // CutSegment samples the segment from p1 to p2 at intervals of bitRadius/2
@@ -275,9 +255,10 @@ func (h *Heightmap) CutSegment(p1, p2 parser.Point, bitRadius float64) {
 	}
 }
 
-// Actor returns the g3n mesh node, building it lazily on first call.
-// surfaceColor is the base color of the carved material.
-func (h *Heightmap) Actor(surfaceColor math32.Color) *graphic.Mesh {
+// Actor returns the g3n node containing the opaque and transparent heightmap
+// meshes, building it lazily on first call. surfaceColor is the base color of
+// the carved material.
+func (h *Heightmap) Actor(surfaceColor math32.Color) *core.Node {
 	if h.actor != nil {
 		return h.actor
 	}
@@ -294,23 +275,50 @@ func (h *Heightmap) buildActor() {
 	//
 	// 2 triangles × 3 vertices = 6 unique vertex slots per quad cell.
 	nVerts := (h.Nx - 1) * (h.Ny - 1) * 6
-
-	positions := math32.NewArrayF32(nVerts*3, nVerts*3)
-	normals := math32.NewArrayF32(nVerts*3, nVerts*3)
 	indices := math32.NewArrayU32(nVerts, nVerts)
 	for i := 0; i < nVerts; i++ {
 		indices[i] = uint32(i)
 	}
 
-	geom := geometry.NewGeometry()
-	h.posVBO = gls.NewVBO(positions).AddAttrib(gls.VertexPosition)
-	h.normVBO = gls.NewVBO(normals).AddAttrib(gls.VertexNormal)
-	geom.AddVBO(h.posVBO)
-	geom.AddVBO(h.normVBO)
-	geom.SetIndices(indices)
+	opaqueGeom, opaquePos, opaqueNorm := newHeightmapGeometry(nVerts, indices)
+	h.opaquePosVBO = opaquePos
+	h.opaqueNormVBO = opaqueNorm
 
+	throughGeom, throughPos, throughNorm := newHeightmapGeometry(nVerts, indices)
+	h.throughPosVBO = throughPos
+	h.throughNormVBO = throughNorm
+
+	opaqueMat := h.newSurfaceMaterial(1.0, false)
+	throughMat := h.newSurfaceMaterial(0.28, true)
+	throughMat.SetDepthMask(false)
+
+	h.actor = core.NewNode()
+	h.actor.SetName("heightmap")
+	h.actor.Add(graphic.NewMesh(opaqueGeom, opaqueMat))
+	h.actor.Add(graphic.NewMesh(throughGeom, throughMat))
+
+	// Populate the VBOs with the initial flat surface.
+	h.RefreshMesh()
+}
+
+func newHeightmapGeometry(nVerts int, indices math32.ArrayU32) (*geometry.Geometry, *gls.VBO, *gls.VBO) {
+	positions := math32.NewArrayF32(nVerts*3, nVerts*3)
+	normals := math32.NewArrayF32(nVerts*3, nVerts*3)
+
+	geom := geometry.NewGeometry()
+	posVBO := gls.NewVBO(positions).AddAttrib(gls.VertexPosition)
+	normVBO := gls.NewVBO(normals).AddAttrib(gls.VertexNormal)
+	geom.AddVBO(posVBO)
+	geom.AddVBO(normVBO)
+	geom.SetIndices(indices)
+	return geom, posVBO, normVBO
+}
+
+func (h *Heightmap) newSurfaceMaterial(opacity float32, transparent bool) *material.Standard {
 	mat := material.NewStandard(&h.surfaceColor)
 	mat.SetSide(material.SideDouble)
+	mat.SetTransparent(transparent)
+	mat.SetOpacity(opacity)
 	// Ambient = 50% body color so even down-facing slopes have a base
 	// brightness; specular = subtle warm sheen for that "freshly machined
 	// wood" highlight on flat tops.
@@ -321,11 +329,7 @@ func (h *Heightmap) buildActor() {
 	})
 	mat.SetSpecularColor(&math32.Color{R: 0.35, G: 0.30, B: 0.22})
 	mat.SetShininess(28)
-
-	h.actor = graphic.NewMesh(geom, mat)
-
-	// Populate the VBOs with the initial flat surface.
-	h.RefreshMesh()
+	return mat
 }
 
 // RefreshMesh regenerates positions + per-triangle face normals from the
@@ -333,17 +337,17 @@ func (h *Heightmap) buildActor() {
 // of float32 work per call. For typical grids (≤100×100) this is well
 // under a millisecond — safe to call at the throttled 15 Hz cadence.
 func (h *Heightmap) RefreshMesh() {
-	if h.posVBO == nil {
+	if h.opaquePosVBO == nil || h.throughPosVBO == nil {
 		return
 	}
 
-	posBuf := h.posVBO.Buffer()
-	normBuf := h.normVBO.Buffer()
+	opaquePosBuf := h.opaquePosVBO.Buffer()
+	opaqueNormBuf := h.opaqueNormVBO.Buffer()
+	throughPosBuf := h.throughPosVBO.Buffer()
+	throughNormBuf := h.throughNormVBO.Buffer()
 
-	pi := 0
-	ni := 0
-
-	throughMode := h.MaterialThickness > 0
+	opi, oni := 0, 0
+	tpi, tni := 0, 0
 
 	for iy := 0; iy < h.Ny-1; iy++ {
 		for ix := 0; ix < h.Nx-1; ix++ {
@@ -356,18 +360,6 @@ func (h *Heightmap) RefreshMesh() {
 			i01 := (iy+1)*h.Nx + ix
 			i11 := (iy+1)*h.Nx + ix + 1
 
-			// All four corners cut through? Drop the quad — emit
-			// degenerate (zero-area) triangles so the GPU draws nothing
-			// and we end up with a real hole in the mesh where the part
-			// was sliced out.
-			if throughMode && h.through[i00] && h.through[i10] && h.through[i01] && h.through[i11] {
-				pi = writePos(posBuf, pi, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-				ni = writeNorm(normBuf, ni, 0, 0, 1, 3)
-				pi = writePos(posBuf, pi, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-				ni = writeNorm(normBuf, ni, 0, 0, 1, 3)
-				continue
-			}
-
 			x0 := h.xs[ix]
 			x1 := h.xs[ix+1]
 			y0 := h.ys[iy]
@@ -377,20 +369,42 @@ func (h *Heightmap) RefreshMesh() {
 			z01 := h.heights[i01]
 			z11 := h.heights[i11]
 
-			// Triangle A: v0(x0,y0,z00), v1(x1,y0,z10), v2(x0,y1,z01)
-			n1x, n1y, n1z := triNormal(x0, y0, z00, x1, y0, z10, x0, y1, z01)
-			pi = writePos(posBuf, pi, x0, y0, z00, x1, y0, z10, x0, y1, z01)
-			ni = writeNorm(normBuf, ni, n1x, n1y, n1z, 3)
-
-			// Triangle B: v1(x1,y0,z10), v3(x1,y1,z11), v2(x0,y1,z01)
-			n2x, n2y, n2z := triNormal(x1, y0, z10, x1, y1, z11, x0, y1, z01)
-			pi = writePos(posBuf, pi, x1, y0, z10, x1, y1, z11, x0, y1, z01)
-			ni = writeNorm(normBuf, ni, n2x, n2y, n2z, 3)
+			throughQuad := h.through[i00] && h.through[i10] && h.through[i01] && h.through[i11]
+			if throughQuad {
+				opi, oni = writeDegenerateQuad(opaquePosBuf, opaqueNormBuf, opi, oni)
+				tpi, tni = writeQuad(throughPosBuf, throughNormBuf, tpi, tni, x0, x1, y0, y1, z00, z10, z01, z11)
+			} else {
+				opi, oni = writeQuad(opaquePosBuf, opaqueNormBuf, opi, oni, x0, x1, y0, y1, z00, z10, z01, z11)
+				tpi, tni = writeDegenerateQuad(throughPosBuf, throughNormBuf, tpi, tni)
+			}
 		}
 	}
 
-	h.posVBO.Update()
-	h.normVBO.Update()
+	h.opaquePosVBO.Update()
+	h.opaqueNormVBO.Update()
+	h.throughPosVBO.Update()
+	h.throughNormVBO.Update()
+}
+
+func writeQuad(posBuf, normBuf *math32.ArrayF32, pi, ni int, x0, x1, y0, y1, z00, z10, z01, z11 float32) (int, int) {
+	// Triangle A: v0(x0,y0,z00), v1(x1,y0,z10), v2(x0,y1,z01)
+	n1x, n1y, n1z := triNormal(x0, y0, z00, x1, y0, z10, x0, y1, z01)
+	pi = writePos(posBuf, pi, x0, y0, z00, x1, y0, z10, x0, y1, z01)
+	ni = writeNorm(normBuf, ni, n1x, n1y, n1z, 3)
+
+	// Triangle B: v1(x1,y0,z10), v3(x1,y1,z11), v2(x0,y1,z01)
+	n2x, n2y, n2z := triNormal(x1, y0, z10, x1, y1, z11, x0, y1, z01)
+	pi = writePos(posBuf, pi, x1, y0, z10, x1, y1, z11, x0, y1, z01)
+	ni = writeNorm(normBuf, ni, n2x, n2y, n2z, 3)
+	return pi, ni
+}
+
+func writeDegenerateQuad(posBuf, normBuf *math32.ArrayF32, pi, ni int) (int, int) {
+	pi = writePos(posBuf, pi, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	ni = writeNorm(normBuf, ni, 0, 0, 1, 3)
+	pi = writePos(posBuf, pi, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	ni = writeNorm(normBuf, ni, 0, 0, 1, 3)
+	return pi, ni
 }
 
 // triNormal returns the unit face normal of the triangle (a, b, c) using the
