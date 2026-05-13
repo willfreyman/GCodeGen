@@ -83,6 +83,13 @@ type Heightmap struct {
 	opaqueNormVBO  *gls.VBO
 	throughPosVBO  *gls.VBO
 	throughNormVBO *gls.VBO
+	shellNode      *core.Node
+	shellPosVBO    *gls.VBO
+	shellNormVBO   *gls.VBO
+
+	// ShowShell controls whether the material-thickness walls and bottom are
+	// visible. The shell is only meaningful when MaterialThickness > 0.
+	ShowShell bool
 
 	// surfaceColor lets us recompute lighting/coloring on refresh.
 	surfaceColor math32.Color
@@ -105,18 +112,19 @@ func NewHeightmap(xRange, yRange [2]float64, topZ, cellSize float64) *Heightmap 
 	}
 
 	h := &Heightmap{
-		X0:       xRange[0],
-		X1:       xRange[1],
-		Y0:       yRange[0],
-		Y1:       yRange[1],
-		TopZ:     topZ,
-		CellSize: cellSize,
-		Nx:       nx,
-		Ny:       ny,
-		heights:  make([]float32, nx*ny),
-		through:  make([]bool, nx*ny),
-		xs:       make([]float32, nx),
-		ys:       make([]float32, ny),
+		X0:        xRange[0],
+		X1:        xRange[1],
+		Y0:        yRange[0],
+		Y1:        yRange[1],
+		TopZ:      topZ,
+		CellSize:  cellSize,
+		Nx:        nx,
+		Ny:        ny,
+		heights:   make([]float32, nx*ny),
+		through:   make([]bool, nx*ny),
+		ShowShell: true,
+		xs:        make([]float32, nx),
+		ys:        make([]float32, ny),
 	}
 
 	for i := range h.heights {
@@ -216,6 +224,16 @@ func (h *Heightmap) isThroughDepth(depth float32) bool {
 	return h.MaterialThickness > 0 && math.Abs(float64(depth)) > h.MaterialThickness
 }
 
+// SetShowShell toggles the material-thickness side walls and bottom mesh. The
+// shell still stays hidden when MaterialThickness <= 0 because no bottom plane
+// can be inferred from a disabled thickness setting.
+func (h *Heightmap) SetShowShell(show bool) {
+	h.ShowShell = show
+	if h.shellNode != nil {
+		h.shellNode.SetVisible(show && h.MaterialThickness > 0)
+	}
+}
+
 // CutSegment samples the segment from p1 to p2 at intervals of bitRadius/2
 // (so footprints overlap and the swept volume looks continuous) and applies
 // Cut at each sample.
@@ -275,10 +293,7 @@ func (h *Heightmap) buildActor() {
 	//
 	// 2 triangles × 3 vertices = 6 unique vertex slots per quad cell.
 	nVerts := (h.Nx - 1) * (h.Ny - 1) * 6
-	indices := math32.NewArrayU32(nVerts, nVerts)
-	for i := 0; i < nVerts; i++ {
-		indices[i] = uint32(i)
-	}
+	indices := sequentialIndices(nVerts)
 
 	opaqueGeom, opaquePos, opaqueNorm := newHeightmapGeometry(nVerts, indices)
 	h.opaquePosVBO = opaquePos
@@ -292,13 +307,31 @@ func (h *Heightmap) buildActor() {
 	throughMat := h.newSurfaceMaterial(0.28, true)
 	throughMat.SetDepthMask(false)
 
+	shellQuads := (h.Nx-1)*(h.Ny-1) + 2*(h.Nx-1) + 2*(h.Ny-1)
+	shellGeom, shellPos, shellNorm := newHeightmapGeometry(shellQuads*6, sequentialIndices(shellQuads*6))
+	h.shellPosVBO = shellPos
+	h.shellNormVBO = shellNorm
+	shellMat := h.newSurfaceMaterial(0.92, false)
+
 	h.actor = core.NewNode()
 	h.actor.SetName("heightmap")
 	h.actor.Add(graphic.NewMesh(opaqueGeom, opaqueMat))
 	h.actor.Add(graphic.NewMesh(throughGeom, throughMat))
+	h.shellNode = core.NewNode()
+	h.shellNode.SetName("heightmap-shell")
+	h.shellNode.Add(graphic.NewMesh(shellGeom, shellMat))
+	h.actor.Add(h.shellNode)
 
 	// Populate the VBOs with the initial flat surface.
 	h.RefreshMesh()
+}
+
+func sequentialIndices(nVerts int) math32.ArrayU32 {
+	indices := math32.NewArrayU32(nVerts, nVerts)
+	for i := 0; i < nVerts; i++ {
+		indices[i] = uint32(i)
+	}
+	return indices
 }
 
 func newHeightmapGeometry(nVerts int, indices math32.ArrayU32) (*geometry.Geometry, *gls.VBO, *gls.VBO) {
@@ -380,22 +413,143 @@ func (h *Heightmap) RefreshMesh() {
 		}
 	}
 
+	h.writeShellMesh()
+
 	h.opaquePosVBO.Update()
 	h.opaqueNormVBO.Update()
 	h.throughPosVBO.Update()
 	h.throughNormVBO.Update()
 }
 
+func (h *Heightmap) writeShellMesh() {
+	if h.shellNode != nil {
+		h.shellNode.SetVisible(h.ShowShell && h.MaterialThickness > 0)
+	}
+	if h.shellPosVBO == nil || h.shellNormVBO == nil {
+		return
+	}
+
+	posBuf := h.shellPosVBO.Buffer()
+	normBuf := h.shellNormVBO.Buffer()
+	pi, ni := 0, 0
+	bottomZ := float32(-h.MaterialThickness)
+
+	for iy := 0; iy < h.Ny-1; iy++ {
+		for ix := 0; ix < h.Nx-1; ix++ {
+			i00 := iy*h.Nx + ix
+			i10 := iy*h.Nx + ix + 1
+			i01 := (iy+1)*h.Nx + ix
+			i11 := (iy+1)*h.Nx + ix + 1
+
+			throughQuad := h.MaterialThickness > 0 && h.through[i00] && h.through[i10] && h.through[i01] && h.through[i11]
+			if h.MaterialThickness <= 0 || throughQuad {
+				pi, ni = writeDegenerateQuad(posBuf, normBuf, pi, ni)
+				continue
+			}
+
+			x0 := h.xs[ix]
+			x1 := h.xs[ix+1]
+			y0 := h.ys[iy]
+			y1 := h.ys[iy+1]
+			pi, ni = writeQuadFixedNormal(posBuf, normBuf, pi, ni, 0, 0, -1,
+				x0, y0, bottomZ,
+				x0, y1, bottomZ,
+				x1, y0, bottomZ,
+				x1, y1, bottomZ,
+			)
+		}
+	}
+
+	// South and north exterior walls. Through-cut edge segments are omitted so
+	// cuts that pass completely through can open the shell at the stock edge.
+	for ix := 0; ix < h.Nx-1; ix++ {
+		i0 := ix
+		i1 := ix + 1
+		if x0, y0, z0, x1, y1, z1, ok := h.shellEdgeEndpoints(i0, i1, bottomZ); ok {
+			pi, ni = writeQuadFixedNormal(posBuf, normBuf, pi, ni, 0, -1, 0, x0, y0, z0, x0, y0, bottomZ, x1, y1, z1, x1, y1, bottomZ)
+		} else {
+			pi, ni = writeDegenerateQuad(posBuf, normBuf, pi, ni)
+		}
+
+		i0 = (h.Ny-1)*h.Nx + ix
+		i1 = (h.Ny-1)*h.Nx + ix + 1
+		if x0, y0, z0, x1, y1, z1, ok := h.shellEdgeEndpoints(i0, i1, bottomZ); ok {
+			pi, ni = writeQuadFixedNormal(posBuf, normBuf, pi, ni, 0, 1, 0, x0, y0, z0, x1, y1, z1, x0, y0, bottomZ, x1, y1, bottomZ)
+		} else {
+			pi, ni = writeDegenerateQuad(posBuf, normBuf, pi, ni)
+		}
+	}
+
+	// West and east exterior walls.
+	for iy := 0; iy < h.Ny-1; iy++ {
+		i0 := iy * h.Nx
+		i1 := (iy + 1) * h.Nx
+		if x0, y0, z0, x1, y1, z1, ok := h.shellEdgeEndpoints(i0, i1, bottomZ); ok {
+			pi, ni = writeQuadFixedNormal(posBuf, normBuf, pi, ni, -1, 0, 0, x0, y0, z0, x1, y1, z1, x0, y0, bottomZ, x1, y1, bottomZ)
+		} else {
+			pi, ni = writeDegenerateQuad(posBuf, normBuf, pi, ni)
+		}
+
+		i0 = iy*h.Nx + h.Nx - 1
+		i1 = (iy+1)*h.Nx + h.Nx - 1
+		if x0, y0, z0, x1, y1, z1, ok := h.shellEdgeEndpoints(i0, i1, bottomZ); ok {
+			pi, ni = writeQuadFixedNormal(posBuf, normBuf, pi, ni, 1, 0, 0, x0, y0, z0, x0, y0, bottomZ, x1, y1, z1, x1, y1, bottomZ)
+		} else {
+			pi, ni = writeDegenerateQuad(posBuf, normBuf, pi, ni)
+		}
+	}
+
+	h.shellPosVBO.Update()
+	h.shellNormVBO.Update()
+}
+
+func (h *Heightmap) shellEdgeEndpoints(i0, i1 int, bottomZ float32) (float32, float32, float32, float32, float32, float32, bool) {
+	if h.MaterialThickness <= 0 || (h.through[i0] && h.through[i1]) {
+		return 0, 0, 0, 0, 0, 0, false
+	}
+	z0 := h.heights[i0]
+	if z0 < bottomZ {
+		z0 = bottomZ
+	}
+	z1 := h.heights[i1]
+	if z1 < bottomZ {
+		z1 = bottomZ
+	}
+	if z0 == bottomZ && z1 == bottomZ {
+		return 0, 0, 0, 0, 0, 0, false
+	}
+	return h.xs[i0%h.Nx], h.ys[i0/h.Nx], z0, h.xs[i1%h.Nx], h.ys[i1/h.Nx], z1, true
+}
+
 func writeQuad(posBuf, normBuf *math32.ArrayF32, pi, ni int, x0, x1, y0, y1, z00, z10, z01, z11 float32) (int, int) {
-	// Triangle A: v0(x0,y0,z00), v1(x1,y0,z10), v2(x0,y1,z01)
-	n1x, n1y, n1z := triNormal(x0, y0, z00, x1, y0, z10, x0, y1, z01)
-	pi = writePos(posBuf, pi, x0, y0, z00, x1, y0, z10, x0, y1, z01)
+	return writeQuad3D(posBuf, normBuf, pi, ni,
+		x0, y0, z00,
+		x1, y0, z10,
+		x0, y1, z01,
+		x1, y1, z11,
+	)
+}
+
+func writeQuad3D(posBuf, normBuf *math32.ArrayF32, pi, ni int,
+	ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz float32) (int, int) {
+	// Triangle A: a, b, c
+	n1x, n1y, n1z := triNormal(ax, ay, az, bx, by, bz, cx, cy, cz)
+	pi = writePos(posBuf, pi, ax, ay, az, bx, by, bz, cx, cy, cz)
 	ni = writeNorm(normBuf, ni, n1x, n1y, n1z, 3)
 
-	// Triangle B: v1(x1,y0,z10), v3(x1,y1,z11), v2(x0,y1,z01)
-	n2x, n2y, n2z := triNormal(x1, y0, z10, x1, y1, z11, x0, y1, z01)
-	pi = writePos(posBuf, pi, x1, y0, z10, x1, y1, z11, x0, y1, z01)
+	// Triangle B: b, d, c
+	n2x, n2y, n2z := triNormal(bx, by, bz, dx, dy, dz, cx, cy, cz)
+	pi = writePos(posBuf, pi, bx, by, bz, dx, dy, dz, cx, cy, cz)
 	ni = writeNorm(normBuf, ni, n2x, n2y, n2z, 3)
+	return pi, ni
+}
+
+func writeQuadFixedNormal(posBuf, normBuf *math32.ArrayF32, pi, ni int, nx, ny, nz float32,
+	ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz float32) (int, int) {
+	pi = writePos(posBuf, pi, ax, ay, az, bx, by, bz, cx, cy, cz)
+	ni = writeNorm(normBuf, ni, nx, ny, nz, 3)
+	pi = writePos(posBuf, pi, bx, by, bz, dx, dy, dz, cx, cy, cz)
+	ni = writeNorm(normBuf, ni, nx, ny, nz, 3)
 	return pi, ni
 }
 
