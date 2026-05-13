@@ -1,7 +1,7 @@
 # gcode_viewer_v3
 
 Go port of `gcode_viewer_v2/` (Python + VTK + PyQt5) using the
-[g3n](https://github.com/g3n/engine) engine. Single ~5 MB binary vs
+[g3n](https://github.com/g3n/engine) engine. Single ~10 MB binary vs
 ~180-220 MB for the PyInstaller build of v2.
 
 **Shared Go source, two platform folders.** All Go source lives in

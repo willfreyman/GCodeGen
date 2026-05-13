@@ -238,17 +238,7 @@ func NewToolbar(width float32, initialBitDia float64, callbacks ToolbarCallbacks
 	tb.Panel.Add(tb.optionsBtn)
 	x += 90 + buttonGap
 
-	// Shell toggle — shows/hides material-thickness side walls and bottom.
-	tb.shellCheck = gui.NewCheckBox("Walls/bottom")
-	tb.shellCheck.SetValue(true)
-	tb.shellCheck.SetPosition(x, yRow1+3)
-	tb.shellCheck.SetSize(shellToggleW, buttonHeight)
-	tb.shellCheck.Subscribe(gui.OnChange, func(string, interface{}) {
-		if tb.cb.OnStockShellToggled != nil {
-			tb.cb.OnStockShellToggled(tb.shellCheck.Value())
-		}
-	})
-	tb.Panel.Add(tb.shellCheck)
+	
 
 	// Build the dropdown options panel (initially hidden). It's positioned
 	// in WINDOW coordinates (not relative to the toolbar) — the caller is
@@ -291,7 +281,7 @@ func NewToolbar(width float32, initialBitDia float64, callbacks ToolbarCallbacks
 func buildOptionsPanel(x, y float32, tb *Toolbar) *gui.Panel {
 	const (
 		panelW = 280.0
-		panelH = 90.0
+		panelH = 120.0
 	)
 	panel := gui.NewPanel(panelW, panelH)
 	panel.SetColor(&math32.Color{R: 0.22, G: 0.24, B: 0.28})
@@ -322,6 +312,19 @@ func buildOptionsPanel(x, y float32, tb *Toolbar) *gui.Panel {
 	hint := gui.NewLabel("Cuts deeper than this slice through")
 	hint.SetPosition(70, 60)
 	panel.Add(hint)
+
+	// Walls/bottom toggle — shows/hides material-thickness side walls and bottom.
+	tb.shellCheck = gui.NewCheckBox("Walls/bottom")
+	tb.shellCheck.SetValue(true)
+	tb.shellCheck.SetPosition(8, 90) // Vertically centered
+	tb.shellCheck.SetSize(100, buttonHeight)
+	tb.shellCheck.SetEnabled(false) // Initially disabled
+	tb.shellCheck.Subscribe(gui.OnChange, func(string, interface{}) {
+		if tb.cb.OnStockShellToggled != nil {
+			tb.cb.OnStockShellToggled(tb.shellCheck.Value())
+		}
+	})
+	panel.Add(tb.shellCheck)
 
 	// Commit on Enter or focus loss too, like the bit-diameter edit.
 	tb.matEdit.Subscribe(gui.OnFocusLost, func(string, interface{}) {
@@ -380,6 +383,10 @@ func (t *Toolbar) commitMaterialThickness() {
 		if t.cb.OnMaterialThicknessApplied != nil {
 			t.cb.OnMaterialThicknessApplied(0)
 		}
+		// Disable shell checkbox when thickness is 0
+		if t.shellCheck != nil {
+			t.shellCheck.SetEnabled(false)
+		}
 		return
 	}
 
@@ -396,6 +403,10 @@ func (t *Toolbar) commitMaterialThickness() {
 	t.materialThickness = mm
 	if t.cb.OnMaterialThicknessApplied != nil {
 		t.cb.OnMaterialThicknessApplied(mm)
+	}
+	// Enable shell checkbox when thickness > 0
+	if t.shellCheck != nil {
+		t.shellCheck.SetEnabled(mm > 0)
 	}
 }
 

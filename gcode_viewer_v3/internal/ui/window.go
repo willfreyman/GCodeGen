@@ -699,6 +699,18 @@ func (s *sceneState) setStockShellVisible(show bool) {
 	s.heightmap.SetShowShell(show)
 }
 
+// setStockShellEnabled enables or disables the walls/bottom visualization
+// based on whether material thickness is set.
+func (s *sceneState) setStockShellEnabled(enabled bool) {
+	if s.heightmap == nil {
+		return
+	}
+	s.heightmap.SetShowShell(enabled && s.materialThickness > 0)
+	if s.toolbar != nil && s.toolbar.shellCheck != nil {
+		s.toolbar.shellCheck.SetEnabled(enabled)
+	}
+}
+
 // setBitDiameter rebuilds the tool actor at the new bit size. The new tool
 // is placed at the current playback position so the user sees the change
 // in-place without re-loading the file.
