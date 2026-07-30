@@ -28,6 +28,7 @@ see [`CLAUDE.md`](../CLAUDE.md) at the repo root.
 11. [Settings file](#11-settings-file)
 12. [Troubleshooting](#12-troubleshooting)
 13. [Known limitations](#13-known-limitations)
+14. [HoleGen — hole grid generator](#14-holegen--hole-grid-generator)
 
 ---
 
@@ -60,18 +61,18 @@ if you want to read or modify them.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ [Open .nc...] [Play] [Reset] [R] | Speed: ◯───◯ 1.0× | Bit: 6.35  ┤
-│                                  | mm [Set] [Options ▾]             │
+│ [Open .nc...] [Tutorials ▾] [Play] [Reset] [R] | Speed: ◯───◯ 1.0× ┤
+│              | Bit: 6.35 mm [Set] [Options ▾] [HoleGen]             │
 │ ◯─────────────────────────────────────────────────◯ 42%             │
 ├──────────────────────────────────────────────────────────────────────┤
 │                                                          ┌────────┐ │
 │                                                          │  TOP   │ │
 │           [3D scene: stock outline, toolpath,            │FRONT |R│ │
 │            tool, carved heightmap surface]               │   IGHT │ │
-│                                                          └────────┘ │
-│                                                                     │
-│                                                                     │
-│                                                                     │
+│         ╱                                                └────────┘ │
+│        Z  XYZ triad at the stock's low corner                       │
+│        └─Y                                                          │
+│         ╲X                                                          │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -82,6 +83,11 @@ if you want to read or modify them.
   heightmap surface
 * **View cube** — top-right corner, ~90 px square; click any face or
   corner to snap the camera to a standard view
+* **XYZ triad** — three short lines marking the axes: **X red, Y green,
+  Z blue**. It sits just off the low corner of the stock block at the
+  work surface (Z0), or at the world origin when no file is loaded. It
+  scales with the model, so it always reads as a marker rather than a
+  fourth object in the scene.
 
 ---
 
@@ -98,6 +104,8 @@ if you want to read or modify them.
 | **Speed slider** | Playback multiplier from **0.5× to 50×** on a logarithmic scale. The default position (~15% from the left) corresponds to 1×. The numeric label to the right shows the exact current value (e.g., `1.0x`, `5.0x`, `25.0x`). |
 | **Bit edit + Set** | Tool diameter in mm. Type a number, press Enter or click **Set** (or click outside the box) to apply. The end-mill model rebuilds at the new size. The heightmap cell-size formula is `max(0.4 mm, bit_dia / 8)`, so smaller bits give you a finer mesh on the next Reset. |
 | **Options ▾** | Drops down a panel below the toolbar with extra settings (currently: Material thickness — see [§4](#4-options-panel)). |
+| **Tutorials ▾** | Drops down a list of six runnable example programs baked into the binary. Clicking one loads it straight into the scene — no file on disk needed. |
+| **HoleGen** | Opens the hole-grid generator — a draggable panel that writes G-code for a grid of helically bored holes in metal tube, and previews it right here in the viewer. See [§14](#14-holegen--hole-grid-generator). No `▾` on this one because it opens a window, not a dropdown. |
 
 ### Row 2
 
@@ -160,7 +168,11 @@ land on a panel.
 | `Ctrl+O` (Win) / `Cmd+O` (Mac) | Open file |
 | `Spacebar` | Play / Pause |
 | `R` | Reframe camera |
-| `Esc` | Quit |
+| `Esc` | Closes the HoleGen panel if it's open; otherwise quits |
+
+While the HoleGen panel is open the single-key shortcuts (`Spacebar`, `R`)
+are suspended, so typing a preset name doesn't start playback or reframe
+the camera. `Ctrl+O` still works.
 
 (Mac `Cmd+O` may not work yet — g3n's modifier handling is Ctrl-based;
 use `Ctrl+O` on Mac too if `Cmd+O` doesn't fire. Toolbar buttons
@@ -448,6 +460,122 @@ versions — manually check the [Releases page][rel] periodically.
   window without loading the new file.
 
 If any of these matter for your workflow, file an issue on GitHub.
+
+---
+
+## 14. HoleGen — hole grid generator
+
+The **HoleGen** toolbar button opens a draggable panel that generates
+G-code for a rectangular grid of round holes **helically bored** into
+metal tube (sized for FRC / MAXTube robotics stock). Drag it by its
+title bar; close it with the **X**, the **Close** button, or `Esc`.
+
+### Machine setup it assumes
+
+Zero your machine like this before running the program:
+
+| Axis | Zero position |
+|---|---|
+| **X = 0** | The **edge** of the endmill just touching the side face of the tube. The bit is round, so the tube's left face ends up at `bitDiameter / 2`. |
+| **Y = 0** | The exact **center of the first row** of holes. |
+| **Z = 0** | The **top surface** of the material. Z positive is up; cuts go negative. |
+
+Output is metric absolute in the XY plane (`G21 G90 G17`).
+
+### The fields
+
+Grouped into four sections. Every field accepts an optional unit
+suffix — type `in` or `"` for inches and it converts for **that field
+only** (`1.125in`, `1.125"`, and `1.125 in` all mean 28.575 mm). No
+suffix means millimetres.
+
+| Section | Fields |
+|---|---|
+| **Tool & hole** | Bit diameter, target hole diameter |
+| **Grid layout** | X offset to the first column, X/Y spacing, row count, column count |
+| **Spindle & feeds** | Spindle RPM, helical plunge feedrate (Z), circular feedrate (XY) |
+| **Material & helix** | Metal thickness, helical pitch (Z drop per 360°) |
+
+The dropdown beside **target hole diameter** quick-fills common sizes
+(6 mm, 1/2" shaft, bearing hole, 2" hole). It only writes the number
+into the box — you can still type anything you like afterwards.
+
+> The RPM field's "(max 24000)" is advisory text. Nothing enforces it.
+
+Two values *are* enforced, because they'd otherwise take the app down
+rather than just produce odd G-code:
+
+* **Helical pitch must be greater than zero.** The descent loop steps
+  down by one pitch per turn, so a zero or negative pitch never reaches
+  the bottom and would generate G-code forever.
+* **At most 100,000 holes.** Well past any real job, but it stops a
+  mistyped row count from trying to allocate its way out of memory.
+
+Rows and columns must each be at least 1. Everything else — feedrates,
+spacings, diameters — is taken at face value.
+
+### What the generated program does
+
+Per hole, in a **snake order** (columns run alternately bottom-to-top
+and top-to-bottom in Y, so travel between columns is pure X):
+
+1. Rapid to the hole XY, then down to `Z1.0`
+2. Feed out to the +X edge of the finished circle
+3. **Helical descent** — full-circle CCW `G03` arcs, each dropping one
+   pitch, the last clamped exactly to full depth
+4. A flat **spring pass** at final depth to clean the floor
+5. Feed back to the center before lifting, so the wall isn't gouged
+6. Rapid up to the `Z5` safe height
+
+Depth is **metal thickness + 1.5 mm** so every hole breaks fully
+through. If the hole diameter equals the bit diameter there's no circle
+to cut, so it becomes a straight center plunge instead.
+
+Safety ordering is deliberate and shouldn't be changed: the program
+retracts to `Z5` **before** starting the spindle, then dwells 4 seconds
+for spin-up. It ends with `M05`, a return to `X0 Y0`, and `M30`.
+
+### Estimate
+
+The readout under the fields updates as you type:
+
+```
+4 holes  |  Ø28.57mm  |  ~10m 14s
+```
+
+Cutting moves use your real feedrates and are accurate. Rapids are
+assumed at **3000 mm/min**, because the machine's true rapid speed
+isn't encoded in the program. Acceleration, deceleration and GRBL
+look-ahead aren't modelled, so the estimate tends to run slightly
+short. While a field is mid-edit and doesn't parse, the last good
+estimate stays on screen.
+
+### Preview vs. Generate
+
+| Button | What it does |
+|---|---|
+| **Preview in viewer** | Generates in memory and loads it straight into the 3D scene. Nothing is written to disk, and the panel stays open so you can tweak a number and preview again. |
+| **Generate .nc File** | Opens a save dialog (default name `holes.nc`), writes the file, reports where it went, then previews it and closes the panel. |
+
+Either way the program's own **bit diameter** and **metal thickness**
+are pushed into the toolbar and the Options panel, so the end-mill
+model and the through-cut threshold match what you just generated —
+your holes show up as actual holes rather than dimples.
+
+### Presets
+
+Save the current 12 values under a name, reload them later, or delete
+them. Type a name in the **Name** box and hit **Save**; pick from the
+**Preset** dropdown to load.
+
+* Stored at `~/.holegen_presets.json` (`%UserProfile%` on Windows).
+* Values are saved as the **raw text you typed**, so `1.125in` reloads
+  as inches, not as a rounded millimetre value.
+* Every field must be valid before a preset will save — you can't
+  capture half-typed input.
+* Saving over an existing name asks first.
+* A missing or corrupt presets file is ignored rather than fatal; you
+  just start with an empty list.
 
 ---
 

@@ -35,10 +35,29 @@ go run ./cmd/gcodesim                 # quick run from the project root
 go run ./cmd/gcodesim path/to/file.nc # load a file at startup
 ```
 
+## HoleGen — hole-grid generator
+
+The **HoleGen** toolbar button opens a draggable in-window panel that generates
+G-code for a grid of round holes helically bored into metal tube (FRC /
+MAXTube stock). Implemented to [`HoleGen_SPEC.md`](HoleGen_SPEC.md).
+
+- 12 parameters, each accepting an optional `in` / `"` / `mm` suffix.
+- Named target-diameter quick-fill, live run-time estimate, and named
+  presets persisted to `~/.holegen_presets.json`.
+- **Preview in viewer** renders the program in the 3D scene without touching
+  the disk; **Generate .nc File** runs the full save flow and then previews.
+  Either way the program's own bit diameter and tube thickness are pushed
+  into the viewer so the end-mill actor and the through-cut threshold match
+  what was generated.
+
+`internal/holegen/` is pure stdlib with no UI imports, so it is testable
+headless — including a byte-for-byte assertion against the spec's §7.7
+reference program.
+
 ## Tests
 
 ```
-go test ./internal/parser/...
+go test ./internal/parser/... ./internal/holegen/...
 ```
 
 Asserts byte-exact parity against canonical output from the Python v2
@@ -63,11 +82,13 @@ gcode_viewer_v3/
 │   └── main.go                 entry — calls ui.Run()
 └── internal/                   shared Go source, all platforms
     ├── parser/                 G-code parser (1:1 port of v2's parser.py)
-    ├── scene/                  actors: path, stock, tool, view cube, heightmap
+    ├── holegen/                hole-grid G-code generator (pure stdlib logic)
+    ├── scene/                  actors: path, stock, tool, view cube, heightmap, axes
     └── ui/
         ├── window.go           App, scene, camera, animation tick
         ├── orbiter.go          Z-up orbit controller (replaces g3n's Y-up one)
         ├── toolbar.go          two-row toolbar + Options/Tutorials dropdowns
+        ├── holegen_panel.go    HoleGen overlay (12 fields, presets, preview)
         ├── tutorials.go        //go:embed tutorials/*.nc
         ├── tutorials/*.nc      6 starter programs baked into the binary
         ├── window_icon.go      //go:embed icon.png + GLFW SetIcon
@@ -98,11 +119,26 @@ unaffected.
 
 ## Known parity quirks (preserved from Python)
 
-- `G0`/`G1`/`G2`/`G3` mode detection uses substring match with an `elif`
-  chain, so a line written as `G01 X10` is treated as a `G0` rapid (because
-  `"G0"` is a substring of `"G01"`). Files emitted by `gcodegen.py` use bare
-  `G0`/`G1` notation where this never triggers, so the behaviour matches v2
-  in practice. Fix in both implementations together if real-world files
-  with `G01`/`G02`/`G03` notation start showing up.
 - R-form arcs (`G2 X.. Y.. R..`) are silently treated as degenerate moves —
   same as Python.
+
+## Fixed parity bugs (changed in BOTH implementations)
+
+Both of these were found by feeding the viewer its own HoleGen output, and
+both are fixed in `internal/parser/` **and** `gcode_viewer_v2/parser.py` so
+the two stay in lockstep. `testdata/sample.nc` results are unchanged, so the
+golden test still pins Go↔Python parity.
+
+- **G-word matching is by whole number, not substring.** Mode detection used
+  to be a `strings.Contains` / `in` chain, which misread any G-word that
+  merely contained those two characters: `G01`/`G03` were read as `G0`
+  rapids, `G17` set G1 mode, and `G21` left the parser in *arc* mode.
+  Bare-notation files never tripped it, which is why it survived so long —
+  HoleGen output hits all of it. Now `motionMode` / `motion_mode` extracts
+  each G-word and compares the integer.
+- **Full-circle arcs sweep 360° instead of collapsing to a point.** When an
+  arc's end XY equals its start XY — the standard I/J way to program a full
+  circle, and what every helical boring pass emits — the sweep computed as
+  zero, so a bored hole rendered as nothing but a Z descent. `ArcPoints` /
+  `arc_points` now detect the closed case and wind a full revolution in the
+  commanded direction.

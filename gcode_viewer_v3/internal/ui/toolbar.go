@@ -14,7 +14,11 @@ import (
 // Toolbar layout: two rows.
 //
 //	Row 1 (height = toolbarRowH):
-//	  [Open .nc] [Tutorials ▾] [Play/Pause] [Reset] [R] | Speed: [---|---] 1.0x | Bit: [6.35] mm [Set] [Options ▾] [Walls/bottom]
+//	  [Open .nc] [Tutorials ▾] [Play/Pause] [Reset] [R] | Speed: [---|---] 1.0x | Bit: [6.35] mm [Set] [Options ▾] [HoleGen]
+//
+// The "▾" suffix is reserved for the two buttons that open dropdown panels;
+// HoleGen opens a draggable window, so it doesn't carry one.
+//
 //	Row 2 (height = toolbarRowH):
 //	  [progress slider, full width — slidable to scrub]
 const (
@@ -35,7 +39,8 @@ const (
 	bitEditW         = 60.0
 	bitUnitW         = 26.0
 	bitApplyW        = 44.0
-	shellToggleW     = 112.0
+	buttonOptionsW   = 90.0
+	buttonHoleGenW   = 76.0 // narrower than the dropdowns — no "▾" to fit
 	progressPaddingX = 6.0
 	progressHeight   = 18.0
 )
@@ -54,6 +59,7 @@ type ToolbarCallbacks struct {
 	OnMaterialThicknessApplied func(mm float64) // 0 = no through-cut
 	OnStockShellToggled        func(show bool)
 	OnTutorialSelected         func(displayName string)
+	OnHoleGenToggled           func()
 }
 
 // Toolbar is the top control strip.
@@ -67,6 +73,7 @@ type Toolbar struct {
 
 	optionsBtn   *gui.Button
 	tutorialsBtn *gui.Button
+	holeGenBtn   *gui.Button
 	shellCheck   *gui.CheckRadio
 
 	// OptionsPanel / TutorialsPanel are dropdowns that appear below the
@@ -225,7 +232,7 @@ func NewToolbar(width float32, initialBitDia float64, callbacks ToolbarCallbacks
 	// Options ▾ — toggles a panel below the toolbar with extra controls
 	// (currently: material thickness for through-cut).
 	tb.optionsBtn = gui.NewButton("Options ▾")
-	tb.optionsBtn.SetSize(90, buttonHeight)
+	tb.optionsBtn.SetSize(buttonOptionsW, buttonHeight)
 	tb.optionsBtn.SetPosition(x, yRow1)
 	optionsBtnX := x
 	tb.optionsBtn.Subscribe(gui.OnClick, func(string, interface{}) {
@@ -236,9 +243,23 @@ func NewToolbar(width float32, initialBitDia float64, callbacks ToolbarCallbacks
 		}
 	})
 	tb.Panel.Add(tb.optionsBtn)
-	x += 90 + buttonGap
+	x += buttonOptionsW + buttonGap
 
-	
+	// HoleGen — opens the hole-grid generator overlay (see holegen_panel.go).
+	// No "▾" on the label: that marks the two dropdown panels, and this
+	// button opens a draggable window instead. The overlay is owned by the
+	// caller, same as those dropdowns, because it has to live outside the
+	// toolbar's bounds to escape child clipping.
+	tb.holeGenBtn = gui.NewButton("HoleGen")
+	tb.holeGenBtn.SetSize(buttonHoleGenW, buttonHeight)
+	tb.holeGenBtn.SetPosition(x, yRow1)
+	tb.holeGenBtn.Subscribe(gui.OnClick, func(string, interface{}) {
+		if tb.cb.OnHoleGenToggled != nil {
+			tb.cb.OnHoleGenToggled()
+		}
+	})
+	tb.Panel.Add(tb.holeGenBtn)
+	x += buttonHoleGenW + buttonGap
 
 	// Build the dropdown options panel (initially hidden). It's positioned
 	// in WINDOW coordinates (not relative to the toolbar) — the caller is
@@ -452,6 +473,36 @@ func (t *Toolbar) commitBitDia() {
 	t.bitDiameter = d
 	if t.cb.OnBitDiaApplied != nil {
 		t.cb.OnBitDiaApplied(d)
+	}
+}
+
+// SetBitDiameter updates the bit entry to show d without firing
+// OnBitDiaApplied. Used when a generated program dictates its own bit size —
+// the caller has already applied it, and re-dispatching would rebuild the
+// tool actor a second time.
+func (t *Toolbar) SetBitDiameter(d float64) {
+	if d <= 0 {
+		return
+	}
+	t.bitDiameter = d
+	t.bitEdit.SetText(strconv.FormatFloat(d, 'f', -1, 64))
+}
+
+// SetMaterialThickness updates the Options-panel thickness entry (and the
+// walls/bottom checkbox's enabled state) to reflect mm, without firing
+// OnMaterialThicknessApplied. mm <= 0 clears the entry and disables the
+// checkbox, matching what commitMaterialThickness does for empty input.
+func (t *Toolbar) SetMaterialThickness(mm float64) {
+	t.materialThickness = mm
+	if t.matEdit != nil {
+		if mm > 0 {
+			t.matEdit.SetText(strconv.FormatFloat(mm, 'f', -1, 64))
+		} else {
+			t.matEdit.SetText("")
+		}
+	}
+	if t.shellCheck != nil {
+		t.shellCheck.SetEnabled(mm > 0)
 	}
 }
 

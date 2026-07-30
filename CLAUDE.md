@@ -129,7 +129,9 @@ gcode_viewer_v3/
 │   └── g3n_smoke/main.go       single-file API skeleton (build-tag `smoke`, excluded by default)
 ├── internal/
 │   ├── parser/                 1:1 port of v2's parser.py + golden tests vs sample.nc
+│   ├── holegen/                hole-grid G-code generator (pure stdlib, no UI deps)
 │   ├── scene/
+│   │   ├── axes.go             XYZ orientation triad (stock corner, or origin when empty)
 │   │   ├── colors.go           5-stop depth gradient lerp
 │   │   ├── path.go             toolpath: cut LineStrips (depth-graded) + dashed rapid Lines
 │   │   ├── stock.go            stock outline (NewStockWireframe — translucent fill removed)
@@ -142,7 +144,8 @@ gcode_viewer_v3/
 │   ├── ui/
 │   │   ├── window.go           App, scene, camera, animation tick, key handlers
 │   │   ├── orbiter.go          custom Z-up orbit controller (replaces g3n's Y-up OrbitControl)
-│   │   ├── toolbar.go          two-row toolbar + Options + Tutorials dropdown panels
+│   │   ├── toolbar.go          two-row toolbar + Options + Tutorials + HoleGen buttons
+│   │   ├── holegen_panel.go    HoleGen overlay: 12 fields, presets, preview/generate
 │   │   ├── tutorials.go        //go:embed tutorials/*.nc  → bundled tutorial dropdown
 │   │   ├── tutorials/*.nc      6 runnable .nc files baked into the binary
 │   │   ├── window_icon.go      //go:embed icon.png + GLFW SetIcon for title bar
@@ -224,6 +227,99 @@ The editor spawns the two aux processes via `os/exec`, holds their stdin pipes, 
 - **NineSlice solid colors** for button/slider/checkbox states. Avoids bundling 12 PNG assets just for flat fills.
 - **No file association on macOS** for the editor (no `UTExportedTypeDeclarations` in `mac/Info.plist`). The editor exports `.nc`, never opens it; v3's viewer owns the .nc UTI. Distinct bundle IDs (`com.nightbots10686.gcodesimv3` vs `com.nightbots10686.gcodegenv1`) so both `.app`s can coexist on the same Mac.
 
+### HoleGen — hole-grid generator inside the v3 viewer
+
+The **HoleGen** toolbar button (right of Options) opens a draggable in-window
+panel that generates G-code for a grid of round holes helically bored into
+metal tube. Its label deliberately carries no "▾" — that suffix marks the two
+buttons that open dropdown panels (Tutorials, Options), and this one opens a
+window. Built to `gcode_viewer_v3/HoleGen_SPEC.md`, which is the authority on
+every number, format string, and flow — consult it before changing behavior.
+
+- **`internal/holegen/` is pure stdlib and must stay that way.** No g3n, no UI
+  imports. That's what lets `holegen_test.go` assert the spec's §7.7 reference
+  program byte-for-byte and the §8 estimate to 0.01 s. The parser-integration
+  test lives in package `holegen_test` (external) so importing
+  `internal/parser` doesn't contaminate the package's own dependencies.
+- **The spec excludes a visualizer** because the original tool had its own bad
+  one. In v3 the viewer IS the visualizer: `OnLoadProgram` hands the generated
+  text to `loadBytes`, the same path the embedded tutorials use.
+- **Two validation rules go BEYOND spec §11, on purpose — don't remove them.**
+  §11 enforces only "every field parses" and "rows/columns >= 1", but two
+  inputs it permits are fatal rather than merely wrong:
+  - `PitchPerTurn <= 0` makes §7.4's descent loop (`currentZ -= pitch` until
+    it passes `-totalDepth`) never terminate — it appends G03 lines until the
+    process dies. The spec contradicts itself here: §8's estimator clamps the
+    pitch away from zero while §7 doesn't. See `ErrPitchNotPositive`.
+  - An unbounded grid allocates one Hole per cell plus ~10 lines per hole, so
+    a mistyped row count is an out-of-memory kill. See `MaxHoles` (100k).
+  Both are enforced in `ReadParams` **and** `GenerateGCode`. ReadParams is the
+  one that matters for the hang: the live estimate calls it on every
+  keystroke, so the guard fires while the user is still typing, before
+  Generate is ever clicked.
+- **A previewed program overrides the toolbar's bit diameter and material
+  thickness**, and `loadHoleGenProgram` sets both BEFORE calling `loadBytes` —
+  `installMoves` reads `s.bitDiameter` for the heightmap cell size and the
+  end-mill actor, and `s.materialThickness` for the through-cut threshold, so
+  setting them afterwards would carve the first frame with the wrong tool.
+- **The overlay is a sibling of the toolbar in `sceneRoot`**, like the Options
+  and Tutorials dropdowns (g3n clips children to parent bounds), and carries
+  `SetZLayerDelta(2)` so it draws above them — g3n dropdown popups use
+  zLayerDelta 1, and the renderer buckets panels by accumulated delta.
+- **Preset names use an inline entry, not a modal prompt.** sqweek/dialog has
+  no text-input dialog and a second OS window was explicitly out of scope.
+  The rest of §10.4 (validate before saving, blank-name rejection, overwrite
+  confirmation) is unchanged.
+- **`gui.DropDown` fires `OnChange` from `SelectPos`/`SetSelected` with no
+  silent variant, and has no `Clear()`.** Rebuilding the preset list therefore
+  removes items from the end and runs under the panel's `suppress` flag —
+  otherwise refreshing the list loads whatever preset lands in the selected
+  slot. `gui.Edit.SetText` does NOT dispatch OnChange, so programmatic field
+  fills are safe.
+- **Single-key shortcuts stand down while the overlay is open.** The R / Space
+  handlers are subscribed to the raw window rather than through gui.Manager,
+  so they fire even when an Edit holds key focus; typing a preset name would
+  otherwise reframe the camera and start playback. Escape closes the overlay
+  instead of quitting the app.
+- **Layout is a running vertical cursor, not fixed offsets.** Every `build*`
+  method takes the current y and returns the next free y; the panel is created
+  with a provisional height and gets its real one from a single `SetSize` after
+  everything is placed. Add a row without touching any other constant and
+  nothing overlaps. Don't reintroduce hardcoded y values.
+- **`hgSections` groups the 12 fields but must not reorder them.** Spec §3
+  fixes the field order (it's the on-screen order AND the save/generate
+  iteration order); the sections consume `holegen.Fields` sequentially and the
+  spec's order happens to fall into four contiguous meaningful groups. The
+  section counts are a display concern only, and any field the counts don't
+  cover still renders under a trailing "ADDITIONAL" heading rather than
+  silently disappearing.
+- **Widget styles are copied from `gui.StyleDefault()`, never mutated in
+  place.** `Style.Button` / `Style.Edit` are struct values on the shared theme
+  singleton — `s := gui.StyleDefault().Button; …; return &s` restyles one
+  widget, whereas editing the singleton's fields would restyle every button in
+  the app, toolbar included.
+- **The overlay is window-like: draggable by its title bar, with an X to
+  close.** Three details are load-bearing:
+  - Dragging captures the cursor with `gui.Manager().SetCursorFocus(titleBar)`
+    on mouse-down (the same mechanism the orbiter uses). Without it the panel
+    stops following the moment the pointer outruns the bar, because
+    gui.Manager re-picks the panel under the cursor every move. Capture also
+    freezes `gm.target`, which is what guarantees the matching mouse-up still
+    routes back to the title bar to end the drag.
+  - **The close button is a child of the PANEL, not of the title bar.** g3n
+    bubbles a mouse event up the ancestry to the first subscribed ancestor, so
+    a button inside the bar would start a drag on mouse-down — and since
+    `gui.Button` consumes OnMouseUp, that drag would never receive its release
+    and the panel would stay glued to the cursor with the camera's cursor
+    events still captured. Keeping the button out of the bar's subtree makes
+    that unreachable. The title *label* IS a child of the bar, deliberately,
+    so grabbing the text drags the window.
+  - Drag position is clamped in `moveTo` against the window size fed in by
+    `Resize` from the main resize handler: the bar can't go under the toolbar,
+    off the bottom, or so far sideways that there's nothing left to grab.
+    `SetVisible(true)` re-clamps in case the window shrank while it was
+    hidden, and hiding mid-drag releases the cursor capture.
+
 ### Deferred work — polygon-union renderer
 
 **Don't re-derive this from scratch when a user complains about jagged corners.** A full design exists at [`docs/POLYGON_RENDERER.md`](docs/POLYGON_RENDERER.md) for replacing the heightmap's display geometry with mathematically exact swept-stadium polygons (real bit-radius fillets at internal corners, real roundings at external corners). The user has seen the design and chose to defer implementation, possibly after testing simpler fixes (cell-size shrink + finer toolpath sampling) first.
@@ -236,6 +332,26 @@ If a user complains about cut-edge quality:
 The heightmap stays in the codebase regardless — it handles Z-varying moves (plunge ramps, 3D surfacing) that the swept-stadium model can't represent.
 
 ### Cross-cutting things that have already been investigated
+
+- **G-word detection is by whole number in BOTH parsers now.** The old
+  `strings.Contains(line, "G0")` / `"G0" in line` chain misread every G-word
+  that merely contained those characters: `G01`/`G03` became `G0` rapids,
+  `G17` set G1 mode, `G21` left the parser in arc mode. Fixed in
+  `gcode_viewer_v3/internal/parser/parser.go` (`motionMode`) and
+  `gcode_viewer_v2/parser.py` (`motion_mode`) together, per the paired-fix
+  rule. `sample.nc` output is unchanged so the golden test still pins parity.
+  Don't "simplify" either back to a substring test.
+- **The XYZ triad is offset OFF the stock corner, not on it.** The heightmap
+  covers the whole stock footprint at the same topZ the triad anchors to, so a
+  triad sitting exactly on the corner puts its X and Y lines coplanar with the
+  carved surface and z-fights along both edges. `NewAxesForStock` nudges it out
+  in -X/-Y by 12% of the axis length. With no file loaded the triad sits at the
+  world origin instead (`showOriginAxes`), and `installMoves` clears
+  contentRoot so the two never coexist.
+- **Full-circle arcs (end XY == start XY) sweep a full revolution.** Previously
+  the sweep computed as zero and the circle collapsed to a point, so a
+  helically bored hole rendered as a bare Z line and removed no material. Both
+  `ArcPoints` and `arc_points` special-case the closed arc.
 
 - **Jagged cut corners + non-rounded external corners** are caused by heightmap cell discretization (bit_diameter/8 floored at 0.4 mm gives only ~4 cells per bit radius for a 6 mm bit). Combined with flat shading, the bit's circular footprint reads as a chunky octagon. Real fix is the polygon-union renderer in `docs/POLYGON_RENDERER.md`.
 - **3.8 fps → 62 fps fix**: was the heightmap normals filter + 1-mm-everywhere cell size on big stocks. The two perf fixes above (cell scaling + flat shading) brought the same workload to 62 fps in `bench_13`.

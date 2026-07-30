@@ -142,6 +142,7 @@ func Run(initialPath string) {
 		OnMaterialThicknessApplied: func(mm float64) { state.setMaterialThickness(mm) },
 		OnStockShellToggled:        func(show bool) { state.setStockShellVisible(show) },
 		OnTutorialSelected:         func(name string) { state.loadTutorial(name) },
+		OnHoleGenToggled:           func() { state.toggleHoleGen() },
 	})
 	sceneRoot.Add(state.toolbar.Panel)
 	// OptionsPanel / TutorialsPanel are siblings of the toolbar (not
@@ -149,6 +150,13 @@ func Run(initialPath string) {
 	// being clipped to the toolbar's 64-pixel rectangle.
 	sceneRoot.Add(state.toolbar.OptionsPanel)
 	sceneRoot.Add(state.toolbar.TutorialsPanel)
+
+	// HoleGen overlay — a sibling for the same clipping reason, and taller
+	// than either dropdown.
+	state.holeGen = NewHoleGenPanel(toolbarHeight+4, HoleGenCallbacks{
+		OnLoadProgram: func(prog HoleGenProgram) { state.loadHoleGenProgram(prog) },
+	})
+	sceneRoot.Add(state.holeGen.Panel)
 
 	resize := func(_ string, _ interface{}) {
 		// On HiDPI displays (macOS Retina especially) the framebuffer is
@@ -160,6 +168,10 @@ func Run(initialPath string) {
 		win.Gls().Viewport(0, 0, int32(fbW), int32(fbH))
 		cam.SetAspect(float32(w) / float32(h))
 		state.toolbar.Resize(float32(w))
+		// The HoleGen overlay is user-draggable, so it needs the window size
+		// to clamp against — and a re-clamp here keeps it on screen when the
+		// window shrinks.
+		state.holeGen.Resize(float32(w), float32(h))
 	}
 	win.Subscribe(window.OnWindowSize, resize)
 	resize("", nil)
@@ -170,6 +182,28 @@ func Run(initialPath string) {
 			return
 		}
 		ctrl := ke.Mods&window.ModControl != 0
+
+		// These handlers are subscribed to the raw window, NOT through
+		// gui.Manager, so they fire even when a gui.Edit holds key focus —
+		// the keystroke lands in the entry AND here. With only the toolbar's
+		// numeric entries that was survivable; the HoleGen overlay has a
+		// free-text preset-name field where typing "Aluminum 3mm" would
+		// otherwise reframe the camera on the 'r' and start playback on the
+		// space. So while the overlay is open, the unmodified single-key
+		// shortcuts stand down.
+		//
+		// Escape gets special treatment: it closes the overlay rather than
+		// quitting the app out from under someone who is mid-edit.
+		holeGenOpen := state.holeGen != nil && state.holeGen.Visible()
+		if holeGenOpen {
+			if ke.Key == window.KeyEscape {
+				state.holeGen.SetVisible(false)
+				return
+			}
+			if !ctrl {
+				return
+			}
+		}
 
 		switch {
 		case ke.Key == window.KeyO && ctrl:
@@ -204,6 +238,11 @@ func Run(initialPath string) {
 	})
 
 	win.Gls().ClearColor(0.10, 0.11, 0.13, 1.0)
+
+	// Empty scene: show the triad at the world origin so the view still has an
+	// orientation reference before anything is loaded. installMoves clears
+	// contentRoot, so loading a file replaces this with the stock-corner triad.
+	state.showOriginAxes()
 
 	if initialPath != "" {
 		if err := state.loadFile(initialPath); err != nil {
@@ -298,6 +337,7 @@ type sceneState struct {
 	orbit       *Orbiter
 	cube        *scene.ViewCube
 	toolbar     *Toolbar
+	holeGen     *HoleGenPanel
 
 	moves    []*parser.Move
 	min, max parser.Point
@@ -369,6 +409,9 @@ func (s *sceneState) installMoves(moves []*parser.Move, displayName string) erro
 
 	// Stock outline (no fill — the carved heightmap surface fills the volume)
 	s.contentRoot.Add(scene.NewStockWireframe(min, max, 0))
+	// XYZ orientation triad, parked just off the stock's low corner at the
+	// work surface.
+	s.contentRoot.Add(scene.NewAxesForStock(min, max, 0))
 	s.contentRoot.Add(scene.NewPathActor(moves, deepest))
 
 	// Heightmap material-removal surface
@@ -399,6 +442,49 @@ func (s *sceneState) installMoves(moves []*parser.Move, displayName string) erro
 
 	s.frameCamera()
 	return nil
+}
+
+// showOriginAxes puts the XYZ triad at the world origin. Used for the empty
+// scene, where there's no stock corner to hang it off and no bounds to size it
+// against.
+func (s *sceneState) showOriginAxes() {
+	s.contentRoot.Add(scene.NewAxes(scene.DefaultAxisLength))
+}
+
+// toggleHoleGen shows/hides the hole-grid generator overlay, closing the
+// toolbar dropdowns so the three don't stack on top of each other.
+func (s *sceneState) toggleHoleGen() {
+	if s.holeGen == nil {
+		return
+	}
+	open := !s.holeGen.Visible()
+	s.holeGen.SetVisible(open)
+	if open {
+		s.toolbar.OptionsPanel.SetVisible(false)
+		s.toolbar.TutorialsPanel.SetVisible(false)
+	}
+}
+
+// loadHoleGenProgram previews a freshly generated hole program in the 3D
+// scene.
+//
+// The program's own bit diameter and tube thickness are adopted first, because
+// installMoves reads both when it builds the scene: the bit sizes the end-mill
+// actor AND the heightmap cell size, and the thickness is the through-cut
+// threshold that makes a bored hole render as an actual hole instead of a
+// dimple. Setting them afterwards would leave the first frame carved at
+// whatever the toolbar happened to hold.
+func (s *sceneState) loadHoleGenProgram(prog HoleGenProgram) {
+	if prog.BitDiameter > 0 {
+		s.bitDiameter = prog.BitDiameter
+		s.toolbar.SetBitDiameter(prog.BitDiameter)
+	}
+	s.materialThickness = prog.Thickness
+	s.toolbar.SetMaterialThickness(prog.Thickness)
+
+	if err := s.loadBytes([]byte(prog.Text), prog.DisplayName); err != nil {
+		ShowError("HoleGen", "Failed to preview generated program:\n%v", err)
+	}
 }
 
 // loadTutorial reads the embedded tutorial bytes and installs them.
@@ -697,18 +783,6 @@ func (s *sceneState) setStockShellVisible(show bool) {
 		return
 	}
 	s.heightmap.SetShowShell(show)
-}
-
-// setStockShellEnabled enables or disables the walls/bottom visualization
-// based on whether material thickness is set.
-func (s *sceneState) setStockShellEnabled(enabled bool) {
-	if s.heightmap == nil {
-		return
-	}
-	s.heightmap.SetShowShell(enabled && s.materialThickness > 0)
-	if s.toolbar != nil && s.toolbar.shellCheck != nil {
-		s.toolbar.shellCheck.SetEnabled(enabled)
-	}
 }
 
 // setBitDiameter rebuilds the tool actor at the new bit size. The new tool
