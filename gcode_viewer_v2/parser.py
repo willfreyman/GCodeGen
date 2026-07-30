@@ -65,11 +65,49 @@ def val(line, letter):
     return float(m.group(1)) if m else None
 
 
+_G_WORD_RE = re.compile(r"G(\d+)")
+
+# How close start and end XY must be for an arc to count as a programmed full
+# circle rather than a nearly-closed one.
+FULL_CIRCLE_EPS = 1e-9
+
+
+def motion_mode(line):
+    """Return the motion mode named by the first G-word on the line that is one
+    of G0/G1/G2/G3, with leading zeros allowed (so "G01" is G1 and "G03" is G3),
+    or None when the line names no motion word (caller keeps the sticky mode).
+
+    This deliberately compares whole numbers rather than substrings. The obvious
+    `"G0" in line` test, used here originally, misfires on any G-word that merely
+    contains those two characters:
+
+        "G01 X10"      contains "G0" -> a linear cut was read as a rapid
+        "G03 X.. I.."  contains "G0" -> a helical arc was read as a rapid
+        "G90 G21 G17"  contains "G1" (inside G17) -> left the parser in G1 mode
+        "G21"          contains "G2" -> left the parser in ARC mode, so the next
+                       bare coordinate line would be linearized as an arc
+
+    Bare-notation files never tripped the first two, which is why the old
+    behaviour survived this long. Kept in lockstep with the Go port in
+    gcode_viewer_v3/internal/parser/parser.go.
+    """
+    for m in _G_WORD_RE.finditer(line):
+        n = int(m.group(1))
+        if n <= 3:
+            return "G%d" % n
+    return None
+
+
 def arc_points(sx, sy, sz, ex, ey, ez, i, j, clockwise):
     """Linearize a G2/G3 arc from (sx,sy) to (ex,ey) about center offsets (i,j).
 
     The center is at (sx+i, sy+j). Z linearly interpolates from sz to ez along
     the arc parameter. Step count scales with arc length to keep facets ~1.5mm.
+
+    When the end XY equals the start XY the arc is a full 360 degree circle --
+    the standard way to program one in I/J form, and what helical boring emits
+    on every turn. Without that case the sweep computes as zero and the whole
+    circle collapses to a single point.
     """
     cx = sx + i
     cy = sy + j
@@ -78,7 +116,11 @@ def arc_points(sx, sy, sz, ex, ey, ez, i, j, clockwise):
     a1 = math.atan2(sy - cy, sx - cx)
     a2 = math.atan2(ey - cy, ex - cx)
 
-    if clockwise:
+    if abs(ex - sx) < FULL_CIRCLE_EPS and abs(ey - sy) < FULL_CIRCLE_EPS:
+        # Full circle. Direction still decides which way we wind, which matters
+        # for the Z ramp on a helical pass.
+        a2 = a1 - math.tau if clockwise else a1 + math.tau
+    elif clockwise:
         if a2 > a1:
             a2 -= math.tau
     else:
@@ -130,14 +172,11 @@ def parse(text):
         if "M5" in line or "M05" in line:
             spindle = False
 
-        if "G0" in line or "G00" in line:
-            mode = "G0"
-        elif "G1" in line or "G01" in line:
-            mode = "G1"
-        elif "G2" in line or "G02" in line:
-            mode = "G2"
-        elif "G3" in line or "G03" in line:
-            mode = "G3"
+        # Motion mode is sticky: a line with coordinates but no G-word keeps
+        # whatever mode was last set.
+        mm = motion_mode(line)
+        if mm is not None:
+            mode = mm
 
         nf = val(line, "F")
         if nf is not None:
