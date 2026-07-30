@@ -52,10 +52,50 @@ func OpenGCodeFile() (string, error) {
 	return path, nil
 }
 
+// SaveGCodeFile pops a native save-file dialog defaulting to defaultName and
+// returns the chosen absolute path.
+//
+// Returns ("", nil) when the user cancels — same convention as
+// OpenGCodeFile, so callers branch on `path == ""` rather than on a sentinel
+// error.
+func SaveGCodeFile(defaultName string) (string, error) {
+	path, err := dialog.File().
+		Filter("G-code", "nc").
+		Filter("All files", "*").
+		Title("Save G-code").
+		SetStartFile(defaultName).
+		Save()
+
+	if err != nil {
+		if err.Error() == "Cancelled" {
+			return "", nil
+		}
+		return "", err
+	}
+	return path, nil
+}
+
 // ShowError displays a modal error dialog with the given title and a
 // printf-formatted message.
 func ShowError(title, format string, args ...interface{}) {
 	dialog.Message("%s", fmt.Sprintf(format, args...)).
 		Title(title).
 		Error()
+}
+
+// ShowInfo displays a modal informational dialog.
+func ShowInfo(title, format string, args ...interface{}) {
+	dialog.Message("%s", fmt.Sprintf(format, args...)).
+		Title(title).
+		Info()
+}
+
+// Confirm asks a yes/no question and reports whether the user chose yes.
+//
+// Blocks the render loop while it's up, same as the file dialogs and the
+// update prompt — acceptable for a user-initiated modal decision.
+func Confirm(title, format string, args ...interface{}) bool {
+	return dialog.Message("%s", fmt.Sprintf(format, args...)).
+		Title(title).
+		YesNo()
 }

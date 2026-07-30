@@ -12,14 +12,14 @@ import (
 const eps = 1e-6
 
 type expectedMove struct {
-	Kind     string
+	Kind       string
 	Sx, Sy, Sz float64
 	Ex, Ey, Ez float64
-	Feed     float64
-	Spindle  bool
-	Length   float64
-	Duration float64
-	NPoints  int
+	Feed       float64
+	Spindle    bool
+	Length     float64
+	Duration   float64
+	NPoints    int
 }
 
 var expectedMoves = []expectedMove{
@@ -177,6 +177,144 @@ func TestArcG2HalfCircle(t *testing.T) {
 		if !near(math.Hypot(p.X, p.Y), 5) {
 			t.Errorf("arc[%d] off circle: |p| = %v, want 5", i, math.Hypot(p.X, p.Y))
 		}
+	}
+}
+
+// Zero-padded G-words must resolve to their real motion mode. The old
+// substring chain read "G01"/"G03" as "G0" because "G0" is a prefix of both,
+// which turned every cut and every helical arc into a rapid.
+func TestZeroPaddedMotionWords(t *testing.T) {
+	cases := []struct {
+		line string
+		want string
+	}{
+		{"G00 X1", "G0"},
+		{"G01 X1", "G1"},
+		{"G02 X1 Y0 I-1 J0", "G2"},
+		{"G03 X1 Y0 I-1 J0", "G3"},
+		{"G0 X1", "G0"},
+		{"G1 X1", "G1"},
+	}
+	for _, c := range cases {
+		moves := Parse(c.line + "\n")
+		if len(moves) != 1 {
+			t.Fatalf("%q: got %d moves, want 1", c.line, len(moves))
+		}
+		if moves[0].Kind != c.want {
+			t.Errorf("%q: Kind = %q, want %q", c.line, moves[0].Kind, c.want)
+		}
+	}
+}
+
+// Non-motion G-words must not touch the sticky motion mode. "G21" contains
+// "G2" and "G17" contains "G1", which used to leave the parser in arc / feed
+// mode and mis-linearize the next coordinate line.
+func TestNonMotionGWordsLeaveModeAlone(t *testing.T) {
+	// After the preamble the mode is still the G0 default, so the bare
+	// coordinate line must be a rapid — not an arc from the "G2" in "G21".
+	moves := Parse("G90 G21 G17\nX10 Y10\n")
+	if len(moves) != 1 {
+		t.Fatalf("got %d moves, want 1", len(moves))
+	}
+	if moves[0].Kind != "G0" {
+		t.Errorf("Kind = %q, want \"G0\" (G21/G17 must not set the motion mode)",
+			moves[0].Kind)
+	}
+	if len(moves[0].Points) != 2 {
+		t.Errorf("npoints = %d, want 2 (not arc-linearized)", len(moves[0].Points))
+	}
+
+	// G4 dwell, G54 work offset, G17 plane: none are motion words.
+	for _, line := range []string{"G4 P4000", "G54", "G17", "G28.1", "G43 H1"} {
+		if mode, ok := motionMode(line); ok {
+			t.Errorf("motionMode(%q) = %q, want no match", line, mode)
+		}
+	}
+}
+
+// A full-circle arc (end XY == start XY, the I/J way to program one) must
+// sweep a whole revolution instead of collapsing to a point.
+func TestArcFullCircle(t *testing.T) {
+	// Circle of radius 5 centered at the origin, starting at (5,0), CCW.
+	pts := ArcPoints(5, 0, 0, 5, 0, 0, -5, 0, false)
+	if len(pts) < 17 {
+		t.Fatalf("full circle produced %d points, want >= 17", len(pts))
+	}
+	for i, p := range pts {
+		if !near(math.Hypot(p.X, p.Y), 5) {
+			t.Errorf("point[%d] off circle: |p| = %v, want 5", i, math.Hypot(p.X, p.Y))
+		}
+	}
+	// Must close: last point back at the start.
+	last := pts[len(pts)-1]
+	if !near(last.X, 5) || !near(last.Y, 0) {
+		t.Errorf("last = (%v, %v), want (5, 0)", last.X, last.Y)
+	}
+	// And must actually go around — the halfway point is diametrically opposite.
+	mid := pts[len(pts)/2]
+	if !near(mid.X, -5) || math.Abs(mid.Y) > 1e-6 {
+		t.Errorf("midpoint = (%v, %v), want (-5, 0)", mid.X, mid.Y)
+	}
+	// Perimeter must be ~2πr, not ~0.
+	total := 0.0
+	for i := 1; i < len(pts); i++ {
+		total += dist3(pts[i-1], pts[i])
+	}
+	if total < 0.99*2*math.Pi*5 || total > 2*math.Pi*5 {
+		t.Errorf("perimeter = %v, want just under %v", total, 2*math.Pi*5)
+	}
+}
+
+// A helical pass: full circle with a Z drop. Must descend monotonically while
+// staying on the circle.
+func TestArcFullCircleHelical(t *testing.T) {
+	pts := ArcPoints(24.285, 0, 0, 24.285, 0, -1, -11.285, 0, false)
+	if len(pts) < 17 {
+		t.Fatalf("got %d points, want >= 17", len(pts))
+	}
+	if !near(pts[0].Z, 0) {
+		t.Errorf("start Z = %v, want 0", pts[0].Z)
+	}
+	if !near(pts[len(pts)-1].Z, -1) {
+		t.Errorf("end Z = %v, want -1", pts[len(pts)-1].Z)
+	}
+	for i := 1; i < len(pts); i++ {
+		if pts[i].Z > pts[i-1].Z {
+			t.Errorf("Z rose at point %d: %v > %v", i, pts[i].Z, pts[i-1].Z)
+		}
+	}
+	// Centered at x=13 (24.285 - 11.285), radius 11.285.
+	for i, p := range pts {
+		if !near(math.Hypot(p.X-13.0, p.Y), 11.285) {
+			t.Errorf("point[%d] off bore circle: r = %v, want 11.285",
+				i, math.Hypot(p.X-13.0, p.Y))
+		}
+	}
+}
+
+// Clockwise full circles wind the other way.
+func TestArcFullCircleClockwise(t *testing.T) {
+	pts := ArcPoints(5, 0, 0, 5, 0, 0, -5, 0, true)
+	if len(pts) < 17 {
+		t.Fatalf("got %d points, want >= 17", len(pts))
+	}
+	// Second point should have negative Y going clockwise (CCW would be +Y).
+	if pts[1].Y >= 0 {
+		t.Errorf("clockwise circle turned the wrong way: point[1].Y = %v, want < 0", pts[1].Y)
+	}
+}
+
+// A nearly-closed arc must still be treated as an arc, not snapped to a full
+// circle by the epsilon.
+func TestArcNearlyClosedIsNotFullCircle(t *testing.T) {
+	// End 0.01 mm away from the start — a real 359.9° arc.
+	pts := ArcPoints(5, 0, 0, 5, 0.01, 0, -5, 0, false)
+	total := 0.0
+	for i := 1; i < len(pts); i++ {
+		total += dist3(pts[i-1], pts[i])
+	}
+	if total > 0.1 {
+		t.Errorf("nearly-closed arc swept %v mm, want a short arc (epsilon must not snap it)", total)
 	}
 }
 

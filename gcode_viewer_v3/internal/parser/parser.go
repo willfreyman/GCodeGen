@@ -71,7 +71,12 @@ func dist3(a, b Point) float64 {
 }
 
 var (
-	reComment   = regexp.MustCompile(`\(.*?\)`)
+	reComment = regexp.MustCompile(`\(.*?\)`)
+
+	// reGWord matches every G-word on a line so motionMode can compare whole
+	// numbers instead of substrings.
+	reGWord = regexp.MustCompile(`G(\d+)`)
+
 	reLetterVal = map[byte]*regexp.Regexp{
 		'X': regexp.MustCompile(`X(-?\d+\.?\d*)`),
 		'Y': regexp.MustCompile(`Y(-?\d+\.?\d*)`),
@@ -88,6 +93,38 @@ func clean(line string) string {
 		line = line[:i]
 	}
 	return strings.ToUpper(strings.TrimSpace(line))
+}
+
+// motionMode returns the motion mode named by the first G-word on the line
+// that is one of G0/G1/G2/G3, with leading zeros allowed (so "G01" is G1 and
+// "G03" is G3). ok is false when the line names no motion word at all, in
+// which case the caller leaves the sticky mode alone.
+//
+// This deliberately compares whole numbers rather than substrings. The
+// obvious strings.Contains(line, "G0") test — which this port and the Python
+// reference both used originally — misfires on any G-word that merely
+// contains those two characters:
+//
+//	"G01 X10"     contains "G0" → a linear cut was read as a rapid
+//	"G03 X.. I.." contains "G0" → a helical arc was read as a rapid, so it
+//	              neither linearized nor removed any material
+//	"G90 G21 G17" contains "G1" (inside G17) → left the parser in G1 mode
+//	"G21"         contains "G2" → left the parser in ARC mode, so the next
+//	              bare coordinate line would be linearized as an arc
+//
+// Bare-notation files never tripped the first two, which is why the old
+// behaviour survived; HoleGen output hits all of them.
+func motionMode(line string) (string, bool) {
+	for _, m := range reGWord.FindAllStringSubmatch(line, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue // absurdly long digit run — not a motion word
+		}
+		if n <= 3 {
+			return "G" + strconv.Itoa(n), true
+		}
+	}
+	return "", false
 }
 
 // val extracts the numeric value following the given letter.
@@ -141,20 +178,11 @@ func Parse(text string) []*Move {
 			spindle = false
 		}
 
-		// Note: matches Python's substring check + elif chain. Because "G0"
-		// is a substring of "G01", a line like "G01 X10" sets mode="G0", not
-		// "G1". Files emitted by gcodegen.py use bare "G0"/"G1" notation
-		// where this never triggers. Preserved for byte-exact parity with
-		// the Python reference; fix in both implementations together if ever.
-		switch {
-		case strings.Contains(line, "G0") || strings.Contains(line, "G00"):
-			mode = "G0"
-		case strings.Contains(line, "G1") || strings.Contains(line, "G01"):
-			mode = "G1"
-		case strings.Contains(line, "G2") || strings.Contains(line, "G02"):
-			mode = "G2"
-		case strings.Contains(line, "G3") || strings.Contains(line, "G03"):
-			mode = "G3"
+		// Motion mode is sticky: a line with coordinates but no G-word keeps
+		// whatever mode was last set. gcode_viewer_v2/parser.py carries the
+		// same whole-number matching.
+		if mm, ok := motionMode(line); ok {
+			mode = mm
 		}
 
 		if nf, ok := val(line, 'F'); ok {
